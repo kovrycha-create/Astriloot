@@ -1,8 +1,9 @@
+
 import React, { useState, useEffect } from 'react';
 import type { Player, JourneyEvent, ShopItem } from '../types';
 import PlayerStats from './PlayerStats';
 import ItemCard from './ItemCard';
-import { Sparkles, Heart, Package, LogOut, Clock } from 'lucide-react';
+import { Sparkles, Heart, Package, LogOut, Clock, Coins } from 'lucide-react';
 
 interface MerchantPhaseProps {
   player: Player;
@@ -13,10 +14,12 @@ interface MerchantPhaseProps {
 
 const ShopItemCard: React.FC<{
     item: ShopItem;
-    playerEssence: number;
+    player: Player;
     onPurchase: (item: ShopItem) => void;
-}> = ({ item, playerEssence, onPurchase }) => {
-    const canAfford = playerEssence >= item.cost;
+}> = ({ item, player, onPurchase }) => {
+    const aeCost = item.price.ae || 0;
+    const vasCost = item.price.vas || 0;
+    const canAfford = player.essence >= aeCost && player.vas >= vasCost;
     
     return (
         <div className="bg-black/40 border border-purple-800/30 rounded-lg p-4 flex flex-col justify-between">
@@ -34,9 +37,19 @@ const ShopItemCard: React.FC<{
                  )}
             </div>
             <div className="flex items-center justify-between mt-4">
-                <div className="flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-cyan-300" />
-                    <span className="font-bold text-lg text-cyan-300">{item.cost}</span>
+                <div className="flex items-center gap-4">
+                    {vasCost > 0 && (
+                        <div className="flex items-center gap-1.5">
+                            <Coins className="w-5 h-5 text-yellow-400" />
+                            <span className="font-bold text-lg text-yellow-400">{vasCost}</span>
+                        </div>
+                    )}
+                    {aeCost > 0 && (
+                         <div className="flex items-center gap-1.5">
+                            <Sparkles className="w-5 h-5 text-cyan-300" />
+                            <span className="font-bold text-lg text-cyan-300">{aeCost}</span>
+                        </div>
+                    )}
                 </div>
                 <button
                     onClick={() => onPurchase(item)}
@@ -54,7 +67,7 @@ const ShopItemCard: React.FC<{
 const MerchantPhase: React.FC<MerchantPhaseProps> = ({ player, event, onPurchase, onExit }) => {
   const { narrative, inventory = [] } = event;
   const hasItems = inventory.length > 0;
-  const canAffordAnything = hasItems && inventory.some(item => player.essence >= item.cost);
+  const canAffordAnything = hasItems && inventory.some(item => player.essence >= (item.price.ae || 0) && player.vas >= (item.price.vas || 0));
 
   const DURATION = (hasItems && canAffordAnything) ? 22000 : 5000;
 
@@ -111,7 +124,7 @@ const MerchantPhase: React.FC<MerchantPhaseProps> = ({ player, event, onPurchase
                     <ShopItemCard 
                         key={item.id}
                         item={item}
-                        playerEssence={player.essence}
+                        player={player}
                         onPurchase={onPurchase}
                     />
                 ))

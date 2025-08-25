@@ -1,7 +1,8 @@
+
 import React, { useState } from 'react';
 import type { Player, Item, ActiveElixirEffect, TemporaryBuff } from '../types';
 import HealthBar from './HealthBar';
-import { Sword, Shield, Percent, Zap, Swords, ShieldCheck, Sparkles, FlaskConical } from 'lucide-react';
+import { Sword, Shield, Percent, Zap, Swords, ShieldCheck, Sparkles, FlaskConical, Coins } from 'lucide-react';
 import ItemCard from './ItemCard';
 import { ELIXIRS_DATA } from '../constants';
 
@@ -142,7 +143,8 @@ const PlayerStats: React.FC<PlayerStatsProps> = ({ player }) => {
           <ActiveBuffsDisplay buffs={player.temporaryBuffs} />
       )}
 
-      <div className="mt-auto pt-2">
+      <div className="mt-auto pt-2 grid grid-cols-2 gap-2">
+          <StatDisplay icon={<Coins className="w-4 h-4 text-yellow-400" />} label="Vas" value={player.vas} />
           <StatDisplay icon={<Sparkles className="w-4 h-4 text-cyan-300" />} label="Arcane Essence" value={player.essence} />
       </div>
     </div>

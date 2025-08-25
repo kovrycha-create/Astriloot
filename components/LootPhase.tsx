@@ -1,8 +1,13 @@
+
+
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import type { LootPhaseResult, RunHistoryEntry, RunHistoryEntryType, RunStats } from '../types';
-import { Award, Frown, Star, Package, Sword, HeartPulse, Shield, Zap, Swords, ShieldCheck, Gem, Sparkles, Brain, AlertTriangle, Heart, HelpCircle, Store, GitBranch, Pause, Play } from 'lucide-react';
+import type { LootPhaseResult, RunHistoryEntry, RunHistoryEntryType, RunStats, Enchant, Gem } from '../types';
+import { Award, Frown, Star, Package, Sword, HeartPulse, Shield, Zap, Swords, ShieldCheck, Gem as GemIcon, Sparkles, Brain, AlertTriangle, Heart, HelpCircle, Store, GitBranch, Pause, Play } from 'lucide-react';
 import ItemCard from './ItemCard';
 import FormattedLogEntry from './FormattedLogEntry';
+import { RARITY_BORDER_COLORS, RARITY_COLORS, SOCKET_COLOR_CLASSES } from '../constants';
+
 
 interface LootPhaseProps {
   result: LootPhaseResult;
@@ -13,7 +18,7 @@ interface LootPhaseProps {
 const historyIconMap: Record<RunHistoryEntryType, React.ReactNode> = {
     'victory': <Sword className="w-5 h-5 text-green-400" />,
     'level-up': <Star className="w-5 h-5 text-yellow-400" />,
-    'item-forged': <Gem className="w-5 h-5 text-purple-400" />,
+    'item-forged': <GemIcon className="w-5 h-5 text-purple-400" />,
     'event-trap': <AlertTriangle className="w-5 h-5 text-red-500" />,
     'event-shrine': <Heart className="w-5 h-5 text-green-300" />,
     'event-treasure': <Package className="w-5 h-5 text-yellow-500" />,
@@ -55,7 +60,7 @@ const DefeatScreen: React.FC<{ result: LootPhaseResult; onContinue: () => void; 
                             <StatDisplay icon={<Swords className="w-5 h-5 text-purple-400" />} label="Double Strikes" value={runStats.doubleStrikes} />
                             <StatDisplay icon={<ShieldCheck className="w-5 h-5 text-blue-300" />} label="Attacks Blocked" value={runStats.attacksBlocked} />
                             <StatDisplay icon={<Sword className="w-5 h-5 text-gray-300" />} label="Enemies Defeated" value={runStats.enemiesDefeated} />
-                            <StatDisplay icon={<Gem className="w-5 h-5 text-purple-300" />} label="Items Forged" value={runStats.itemsForged} />
+                            <StatDisplay icon={<GemIcon className="w-5 h-5 text-purple-300" />} label="Items Forged" value={runStats.itemsForged} />
                             <StatDisplay icon={<Sparkles className="w-5 h-5 text-cyan-300" />} label="Essence Spent" value={runStats.essenceSpent} />
                              <StatDisplay icon={<Brain className="w-5 h-5 text-blue-300" />} label="Dilemmas Faced" value={runStats.dilemmasFaced} />
                         </div>
@@ -155,6 +160,29 @@ const NoLootDisplay: React.FC = () => (
     </div>
 );
 
+const EnchantDisplay: React.FC<{ enchant: Enchant }> = ({ enchant }) => (
+    <div className={`bg-black/30 border p-3 rounded-lg flex items-center gap-3 ${RARITY_BORDER_COLORS[enchant.rarity]}`}>
+        <Sparkles className="w-8 h-8 text-yellow-300 flex-shrink-0" />
+        <div>
+            <p className={`font-bold ${RARITY_COLORS[enchant.rarity]}`}>{enchant.name}</p>
+            <p className="text-sm text-gray-400">{enchant.effects.map(e => e.description).join(' ')}</p>
+        </div>
+    </div>
+);
+
+const GemDisplay: React.FC<{ gem: Gem }> = ({ gem }) => (
+    <div className={`bg-black/30 border p-3 rounded-lg flex items-center gap-3 border-gray-600`}>
+        <div className={`w-8 h-8 flex-shrink-0 rounded-full flex items-center justify-center ${SOCKET_COLOR_CLASSES[gem.color].bg}`}>
+            <GemIcon className="w-5 h-5 text-white/80" />
+        </div>
+        <div>
+            <p className={`font-bold text-white`}>{gem.name}</p>
+            <p className="text-sm text-gray-400">{gem.effects.map(e => `+${e.value}${e.stat.includes('Chance') ? '%' : ''} ${e.stat.replace(/([A-Z])/g, ' $1')}`).join(', ')}</p>
+        </div>
+    </div>
+);
+
+
 const VictoryStatDisplay: React.FC<{ icon: React.ReactNode, label: string, value: number }> = ({ icon, label, value }) => (
     <div className="flex items-center gap-3 bg-gray-900/50 p-2 rounded-md border border-gray-700/50">
         <div className="w-8 h-8 flex items-center justify-center text-purple-300 flex-shrink-0">{icon}</div>
@@ -167,7 +195,7 @@ const VictoryStatDisplay: React.FC<{ icon: React.ReactNode, label: string, value
 
 
 const VictoryScreen: React.FC<{ result: LootPhaseResult; onContinue: () => void; enemyName: string }> = ({ result, onContinue, enemyName }) => {
-    const { xpGained, itemDropped, levelUp, xpBefore, xpAfter, xpToNextLevel, combatStats } = result;
+    const { xpGained, itemDropped, enchantDropped, gemsDropped, levelUp, xpBefore, xpAfter, xpToNextLevel, combatStats } = result;
     const DURATION = 3000;
     const [timeLeft, setTimeLeft] = useState(DURATION);
     const [isPaused, setIsPaused] = useState(false);
@@ -263,7 +291,10 @@ const VictoryScreen: React.FC<{ result: LootPhaseResult; onContinue: () => void;
                                xpToNextLevel={xpToNextLevel}
                            />
                         )}
-                        {itemDropped ? <ItemCard item={itemDropped} /> : <NoLootDisplay />}
+                        {itemDropped && <ItemCard item={itemDropped} />}
+                        {enchantDropped && <EnchantDisplay enchant={enchantDropped} />}
+                        {gemsDropped && gemsDropped.map((gem, index) => <GemDisplay key={index} gem={gem} />)}
+                        {!itemDropped && !enchantDropped && (!gemsDropped || gemsDropped.length === 0) && <NoLootDisplay />}
                     </div>
 
                     {/* Right Column: Combat Report */}

@@ -1,5 +1,7 @@
+
+
 import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
-import type { Player, Enemy, CombatOutcome, CombatLogEntry, StatusEffect, DamageNumberInfo, RunStats } from '../types';
+import type { Player, Enemy, CombatOutcome, CombatLogEntry, StatusEffect, DamageNumberInfo, RunStats, Equipment } from '../types';
 import CharacterDisplay from './CharacterDisplay';
 import CombatLog from './CombatLog';
 import { Lock, Unlock } from 'lucide-react';
@@ -158,7 +160,7 @@ const AutomatedCombatPhase: React.FC<AutomatedCombatPhaseProps> = ({
     attacker: Player | Enemy, 
     defender: Player | Enemy, 
     isPlayerAttacking: boolean
-  ): { totalDamage: number; outcome: CombatOutcome; isDoubleStrike: boolean } => {
+  ): { totalDamage: number; outcome: CombatOutcome; isDoubleStrike: boolean, healAmount: number } => {
     const didBlock = Math.random() * 100 < defender.blockChance;
     if (didBlock) {
       triggerCharacterAnimation(isPlayerAttacking ? 'enemy' : 'player', 'block');
@@ -169,7 +171,7 @@ const AutomatedCombatPhase: React.FC<AutomatedCombatPhaseProps> = ({
         actorName: attacker.name, targetName: defender.name, damage: 0, isPlayer: isPlayerAttacking,
         actorAttack: attacker.attack, targetDefense: defender.defense, didBlock: true,
       };
-      return { totalDamage: 0, outcome, isDoubleStrike: false };
+      return { totalDamage: 0, outcome, isDoubleStrike: false, healAmount: 0 };
     }
 
     const isCrit = Math.random() * 100 < attacker.critChance;
@@ -197,7 +199,7 @@ const AutomatedCombatPhase: React.FC<AutomatedCombatPhaseProps> = ({
     }
 
     let didProc: StatusEffect['type'] | undefined = undefined;
-    const procEffect = isPlayerAttacking ? player.equipment.weapon?.procEffect : ('loot' in attacker && attacker.loot?.procEffect);
+    const procEffect = isPlayerAttacking ? (attacker as Player).equipment.weapon?.procEffect : undefined;
     if (procEffect && Math.random() * 100 < procEffect.chance) {
         didProc = procEffect.type;
         const setEffects = isPlayerAttacking ? setEnemyStatusEffects : setPlayerStatusEffects;
@@ -208,6 +210,15 @@ const AutomatedCombatPhase: React.FC<AutomatedCombatPhaseProps> = ({
             }
             return [...prev, { type: procEffect.type, damage: procEffect.damage, duration: procEffect.duration }];
         });
+    }
+    
+    let healAmount = 0;
+    if (isPlayerAttacking && !didBlock) {
+        const weapon = (attacker as Player).equipment.weapon;
+        const vampiricEffect = weapon?.enchant?.effects.find(e => e.stat === 'vampiric');
+        if (vampiricEffect) {
+            healAmount = Math.ceil(finalDamage * (vampiricEffect.value / 100));
+        }
     }
 
     const isForcedDoubleStrike = isPlayerAttacking && !firstPlayerAttackHappened.current && player.activeElixir?.type === 'GUARANTEED_DOUBLE_STRIKE_COMBAT';
@@ -222,7 +233,7 @@ const AutomatedCombatPhase: React.FC<AutomatedCombatPhaseProps> = ({
         actorAttack: attacker.attack, targetDefense: defender.defense, isCrit, didProc
     };
 
-    return { totalDamage: finalDamage, outcome, isDoubleStrike };
+    return { totalDamage: finalDamage, outcome, isDoubleStrike, healAmount };
   }, [player.equipment.weapon, player.activeElixir, setEnemyStatusEffects, setPlayerStatusEffects]);
 
 
@@ -254,8 +265,13 @@ const AutomatedCombatPhase: React.FC<AutomatedCombatPhaseProps> = ({
     
     let defenderCurrentHealth = defender.health;
     
-    const { totalDamage, outcome, isDoubleStrike } = handleAttack(attacker, defender, isPlayerTurn);
+    const { totalDamage, outcome, isDoubleStrike, healAmount } = handleAttack(attacker, defender, isPlayerTurn);
     
+    if (healAmount > 0 && isPlayerTurn) {
+        const newHealth = Math.min(attacker.maxHealth, attacker.health + healAmount);
+        newAttackerHealthSetter(newHealth);
+    }
+
     if (isDoubleStrike) {
         triggerCharacterAnimation(isPlayerTurn ? 'player' : 'enemy', 'double-strike');
         if (isPlayerTurn) {
@@ -267,10 +283,15 @@ const AutomatedCombatPhase: React.FC<AutomatedCombatPhaseProps> = ({
     for (let i = 0; i < numAttacks; i++) {
         if (defenderCurrentHealth <= 0) break;
 
-        const currentAttackDamage = i > 0 ? handleAttack(attacker, defender, isPlayerTurn).totalDamage : totalDamage;
-        const finalOutcome = {...outcome, damage: currentAttackDamage, isDoubleStrike: i > 0};
+        const { totalDamage: currentAttackDamage, outcome: currentOutcome, healAmount: currentHealAmount } = i > 0 ? handleAttack(attacker, defender, isPlayerTurn) : { totalDamage, outcome, healAmount };
+        const finalOutcome = {...currentOutcome, isDoubleStrike: i > 0};
         
         await streamAndLogNarrative(finalOutcome);
+
+        if (currentHealAmount > 0 && isPlayerTurn) {
+             const newHealth = Math.min(attacker.maxHealth, attacker.health + currentHealAmount);
+             newAttackerHealthSetter(newHealth);
+        }
         
         if (!finalOutcome.didBlock) {
           defenderCurrentHealth = Math.max(0, defenderCurrentHealth - currentAttackDamage);

@@ -1,0 +1,82 @@
+
+
+{
+  "_comment_currencies": "Definitions for the game's currencies.",
+  "currencies": {
+    "vas": {
+      "id": "vas",
+      "name": "Vas",
+      "icon": "coins_icon",
+      "rarity": "common",
+      "stack_limit": 999999,
+      "description": "A common currency found throughout the world, used for everyday transactions and services."
+    },
+    "ae": {
+      "id": "ae",
+      "name": "Arcane Essence",
+      "icon": "sparkles_icon",
+      "rarity": "rare",
+      "stack_limit": 99999,
+      "description": "A rare and potent substance used for powerful upgrades and forging artifacts."
+    }
+  },
+
+  "_comment_vas_drops": "Formulas and multipliers for Vas drops from enemies.",
+  "vas_drops": {
+    "_comment_formula": "base_vas(L) = round_to_5( random_uniform(min,max) * (1 + level_multiplier*L)^exponent )",
+    "base_random_min": 8,
+    "base_random_max": 16,
+    "level_multiplier": 0.25,
+    "exponent": 1.18,
+    "multipliers": {
+      "normal": 1,
+      "elite": 3,
+      "boss": 12,
+      "event_chest": 8
+    },
+    "streak_bonus_per_encounter": 0.10,
+    "streak_bonus_cap": 0.50,
+    "party_bonus_per_player": 0.12,
+    "party_bonus_cap": 0.36,
+    "total_bonus_cap": 1.50
+  },
+
+  "_comment_conversion": "Rules for one-way Vas to Arcane Essence conversion.",
+  "conversion": {
+    "enabled": true,
+    "one_way_only": true,
+    "rates": [
+      {
+        "locationTag": "town",
+        "from": "vas",
+        "to": "ae",
+        "rate": 120,
+        "dailyCap": 12,
+        "_comment": "120 Vas = 1 AE in Town"
+      },
+      {
+        "locationTag": "camp",
+        "from": "vas",
+        "to": "ae",
+        "rate": 150,
+        "dailyCap": 5,
+        "_comment": "150 Vas = 1 AE at Camp"
+      }
+    ]
+  },
+
+  "_comment_risk": "Penalties applied on player death.",
+  "risk": {
+    "death_vas_loss_percent": 0.15
+  },
+
+  "_comment_vendors": "Baseline tuning for merchant behavior.",
+  "vendors": {
+    "camp_markup_percent": 0.20,
+    "town_discount_chance": 0.15,
+    "town_discount_percent": 0.10,
+    "value_buy_discount_min_percent": 0.30,
+    "value_buy_discount_max_percent": 0.55,
+    "merchant_price_floor_percent": 0.70
+  }
+}

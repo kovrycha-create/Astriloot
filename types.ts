@@ -1,4 +1,8 @@
+
+
+
 export enum GameStateEnum {
+  CHARACTER_SELECT = 'CHARACTER_SELECT',
   JOURNEY = 'JOURNEY',
   GENERATING_ENEMY = 'GENERATING_ENEMY',
   GENERATING_EVENT = 'GENERATING_EVENT',
@@ -9,9 +13,12 @@ export enum GameStateEnum {
   ECHOING_CAIRN = 'ECHOING_CAIRN',
   COMBAT = 'COMBAT',
   DECK_OF_WHISPERS = 'DECK_OF_WHISPERS',
+  ARTIFACT_REVEAL = 'ARTIFACT_REVEAL',
   GEAR_CHOICE = 'GEAR_CHOICE',
   LOOT = 'LOOT',
   CAMP = 'CAMP',
+  ENCHANTING = 'ENCHANTING',
+  GEM_SOCKETING = 'GEM_SOCKETING',
 }
 
 export type GameState = GameStateEnum;
@@ -22,6 +29,29 @@ export interface Ability {
   type: 'attack' | 'defense' | 'utility';
   damage: [number, number];
 }
+
+// --- Currency & Economy Types ---
+export interface Price {
+  vas?: number;
+  ae?: number;
+}
+
+export interface Currency {
+  id: 'vas' | 'ae';
+  name: string;
+  icon?: string;
+  rarity: 'common' | 'rare';
+  stackLimit: number;
+}
+
+export interface ExchangeRate {
+  from: 'vas';
+  to: 'ae';
+  locationTag: 'camp' | 'town';
+  rate: number;
+  dailyCap: number;
+}
+
 
 // Rarity types for items
 export type Rarity = 'Common' | 'Uncommon' | 'Rare' | 'Rare+' | 'Epic' | 'Legendary' | 'Mythic';
@@ -40,6 +70,46 @@ export interface ProcEffect {
     duration: number;
 }
 
+export type EnchantEffectType = BuffableStat | 'vampiric';
+
+export interface EnchantEffect {
+    stat: EnchantEffectType;
+    value: number;
+    description: string;
+}
+
+export interface Enchant {
+    id: string;
+    name: string;
+    description: string;
+    rarity: Rarity;
+    effects: EnchantEffect[];
+}
+
+// --- Gem & Socket Types ---
+export type GemColor = 'RED' | 'BLUE' | 'YELLOW';
+export type GemQuality = 'CHIPPED' | 'FLAWED' | 'STANDARD' | 'FLAWLESS' | 'PERFECT';
+export type SocketColor = 'RED' | 'BLUE' | 'YELLOW';
+
+export interface GemEffect {
+    stat: BuffableStat;
+    value: number;
+}
+
+export interface Gem {
+    id: string;
+    name: string;
+    color: GemColor;
+    quality: GemQuality;
+    effects: GemEffect[];
+}
+
+export interface Socket {
+    color: SocketColor;
+    gem: Gem | null;
+}
+
+
 export interface Item {
   name: string;
   description: string;
@@ -52,6 +122,9 @@ export interface Item {
   blockChance?: number;
   procEffect?: ProcEffect;
   rarity: Rarity;
+  enchant?: Enchant | null;
+  sockets?: Socket[];
+  imageBase64?: string | null;
 }
 
 export interface Equipment {
@@ -110,15 +183,31 @@ export interface Player extends Character {
   abilities: Ability[];
   activeStatusEffects: StatusEffect[];
   essence: number;
+  vas: number;
   activeElixir: ActiveElixirEffect | null;
   temporaryBuffs: TemporaryBuff[];
+  enchants: Enchant[];
+  gems: Gem[];
+}
+
+export interface CharacterData {
+  id: 'ymzo' | 'kiox' | 'nippy' | 'sinira';
+  name: string;
+  nameImageUrl: string;
+  portraitImageUrl: string;
+  description: string;
+  initialState?: Player;
+  status?: 'coming_soon';
 }
 
 export interface Enemy extends Character {
   level: number;
   description: string;
-  imageBase64: string;
+  imageBase64: string | null;
   loot: Omit<Item, 'rarity'> | null;
+  enchantDropped?: Enchant | null;
+  gemsDropped?: Gem[];
+  vasDropped: number;
   activeStatusEffects: StatusEffect[];
 }
 
@@ -156,16 +245,20 @@ export interface JourneyEventOutcome {
     xpGained: number;
     healthChange: number; // Can be positive (healing) or negative (damage)
     itemDropped: Omit<Item, 'rarity'> | null;
+    enchantDropped?: Enchant | null;
+    gemsDropped?: Gem[];
 }
 
 export interface ShopItem {
     id: string;
     name: string;
     description: string;
-    cost: number;
-    type: 'potion' | 'item';
+    price: Price;
+    type: 'potion' | 'item' | 'enchant' | 'gem';
     healthValue?: number;
     itemBase?: Omit<Item, 'rarity'>;
+    enchant?: Enchant;
+    gem?: Gem;
 }
 
 export interface PossibleOutcome {
@@ -184,13 +277,48 @@ export interface EchoingCairnChoice {
     buff: TemporaryBuff;
 }
 
+export interface ValueBuy {
+    enabled: boolean;
+    itemId?: string; // Corresponds to an id in the inventory
+    discountPct?: number;
+}
+
 export interface JourneyEvent {
     type: JourneyEventType;
     narrative: string;
     outcome?: JourneyEventOutcome;
     inventory?: ShopItem[];
     choices?: DilemmaChoice[] | EchoingCairnChoice[];
+    // For merchant events
+    locationTag?: 'camp' | 'town';
+    valueBuy?: ValueBuy;
 }
+
+// --- Merchant Types ---
+export interface MerchantItem {
+    id: string;
+    item: Omit<Item, 'rarity'>;
+    price: Price;
+}
+
+export interface Merchant {
+    id: string;
+    locationTag: 'camp' | 'town';
+    priceModifier: number;
+    stock: MerchantItem[];
+    services: {
+        convert?: boolean;
+        reroll?: boolean;
+        identify?: boolean;
+    };
+    valueBuy?: {
+        enabled: boolean;
+        itemId?: string;
+        discountPct?: number;
+        seed?: number;
+    };
+}
+
 
 // --- Journey/Pathfinding Types ---
 export interface PathNode {
@@ -207,6 +335,7 @@ export interface JourneyNode extends PathNode {
 export interface RunStats {
     damageDealt: number;
     damageTaken: number;
+
     criticalHits: number;
     doubleStrikes: number;
     attacksBlocked: number;
@@ -227,7 +356,9 @@ export interface RunHistoryEntry {
 export interface LootPhaseResult {
     playerWon: boolean;
     xpGained: number;
-    itemDropped: Omit<Item, 'rarity'> | null;
+    itemDropped: Item | null;
+    enchantDropped?: Enchant | null;
+    gemsDropped?: Gem[];
     levelUp: boolean;
     finalLog?: CombatLogEntry[];
     xpBefore?: number;
@@ -244,6 +375,7 @@ export interface CampUpgrades {
     soulfireForge: number;
     alchemistsLab: number;
     scryingPool: number;
+    jewelcraftersTable: number;
 }
 
 export interface CampState {

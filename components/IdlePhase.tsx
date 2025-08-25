@@ -1,6 +1,4 @@
-
 import React, { useState, useEffect } from 'react';
-import { streamIdleNarrative } from '../services/geminiService';
 
 interface IdlePhaseProps {
   onEncounter: () => void;
@@ -12,22 +10,7 @@ const IdlePhase: React.FC<IdlePhaseProps> = ({ onEncounter, victories }) => {
   const [narrative, setNarrative] = useState("Your journey begins...");
 
   useEffect(() => {
-    const fetchNarrative = async () => {
-        try {
-            let fullMessage = '';
-            const stream = streamIdleNarrative(victories);
-            for await (const chunk of stream) {
-                fullMessage += chunk;
-                setNarrative(fullMessage + "...");
-            }
-             setNarrative(fullMessage);
-        } catch (error) {
-            console.error("Failed to fetch idle narrative", error);
-            setNarrative("You venture forth into the unknown...");
-        }
-    };
-    fetchNarrative();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setNarrative("You venture forth into the unknown...");
   }, [victories]);
 
   useEffect(() => {

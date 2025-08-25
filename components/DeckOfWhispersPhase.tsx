@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import type { Item, Rarity, RitualStep, Card, YlemModifier, CardType } from '../types';
 import { runRitualSimulation } from '../utils/deckOfWhispers';
-import { RARITY_COLORS, RARITY_STAT_MODIFIERS, DECK_OF_WHISPERS_CARDS, RARITY_BORDER_COLORS } from '../constants';
-import ItemCard from './ItemCard';
+import { RARITY_COLORS, DECK_OF_WHISPERS_CARDS } from '../constants';
 import { HelpCircle, Gem, Waves, Biohazard, Zap, Atom, Sparkles, Eye, CircleDashed } from 'lucide-react';
 
 interface DeckOfWhispersPhaseProps {
@@ -215,10 +214,9 @@ const AdvancedRules = () => (
 const DeckOfWhispersPhase: React.FC<DeckOfWhispersPhaseProps> = ({ item, onComplete }) => {
     const [ritualLog, setRitualLog] = useState<string[]>([]);
     const [drawnCard, setDrawnCard] = useState<Card | null>(null);
-    const [finalRarity, setFinalRarity] = useState<Rarity | null>(null);
-    const [isComplete, setIsComplete] = useState(false);
     const [isHelpVisible, setIsHelpVisible] = useState(false);
     const [showAdvancedRules, setShowAdvancedRules] = useState(false);
+    const [isComplete, setIsComplete] = useState(false);
     
     const [deckSize, setDeckSize] = useState(DECK_OF_WHISPERS_CARDS.length);
     const [discardPile, setDiscardPile] = useState<Card[]>([]);
@@ -228,46 +226,6 @@ const DeckOfWhispersPhase: React.FC<DeckOfWhispersPhaseProps> = ({ item, onCompl
     const simulationRef = useRef(runRitualSimulation());
     const logContainerRef = useRef<HTMLDivElement>(null);
     const timerRef = useRef<number | null>(null);
-    
-    const DURATION = 4000;
-    const [timeLeft, setTimeLeft] = useState(DURATION);
-    const onCompleteCalled = useRef(false);
-    
-    const handleComplete = useCallback(() => {
-        if (!onCompleteCalled.current && finalRarity) {
-            onCompleteCalled.current = true;
-            onComplete(item, finalRarity);
-        }
-    }, [finalRarity, item, onComplete]);
-
-    useEffect(() => {
-        if (isComplete) {
-            const INTERVAL = 50;
-            const timer = setInterval(() => {
-                setTimeLeft(prev => {
-                    const newTime = prev - INTERVAL;
-                    if (newTime <= 0) {
-                        clearInterval(timer);
-                        handleComplete();
-                        return 0;
-                    }
-                    return newTime;
-                });
-            }, INTERVAL);
-            return () => clearInterval(timer);
-        }
-    }, [isComplete, handleComplete]);
-
-    const handleClick = () => {
-        setTimeLeft(prev => {
-            const newTime = prev - DURATION * 0.34; // 3 clicks to skip
-            if (newTime <= 0) {
-                handleComplete();
-                return 0;
-            }
-            return newTime;
-        });
-    };
 
     useEffect(() => {
         if (logContainerRef.current) {
@@ -291,10 +249,10 @@ const DeckOfWhispersPhase: React.FC<DeckOfWhispersPhaseProps> = ({ item, onCompl
     const processNextStep = (step: IteratorResult<RitualStep, any>) => {
         if (step.done) {
             const result = step.value;
-            setFinalRarity(result.rarity);
             setRitualLog(prev => [...prev, `> Ritual Complete! Rarity Forged: ${result.rarity}!`]);
             // Don't discard the final card, leave it visible
-            setTimeout(() => setIsComplete(true), 1500);
+            setIsComplete(true);
+            setTimeout(() => onComplete(item, result.rarity), 1500);
             return;
         }
 
@@ -340,7 +298,7 @@ const DeckOfWhispersPhase: React.FC<DeckOfWhispersPhaseProps> = ({ item, onCompl
         if (timerRef.current) {
             clearTimeout(timerRef.current);
         }
-        if (finalRarity) return;
+        if (isComplete) return;
 
         if (fastForward) {
              let lastStep: IteratorResult<RitualStep, any>;
@@ -366,61 +324,6 @@ const DeckOfWhispersPhase: React.FC<DeckOfWhispersPhaseProps> = ({ item, onCompl
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
-
-    if (isComplete && finalRarity) {
-        const modifierValue = RARITY_STAT_MODIFIERS[finalRarity];
-        const finalItem: Item = {
-            ...item,
-            rarity: finalRarity,
-            attack: Math.round((item.attack || 0) * modifierValue),
-            defense: Math.round((item.defense || 0) * modifierValue),
-            critChance: item.critChance ? Math.round(item.critChance * modifierValue) : undefined,
-            critDamage: item.critDamage ? Math.round(item.critDamage * modifierValue) : undefined,
-            doubleStrikeChance: item.doubleStrikeChance ? Math.round(item.doubleStrikeChance * modifierValue) : undefined,
-            blockChance: item.blockChance ? Math.round(item.blockChance * modifierValue) : undefined,
-        };
-        
-        const RARITY_BG_CLASSES: Record<Rarity, string> = {
-            Common: 'rarity-bg-common',
-            Uncommon: 'rarity-bg-uncommon',
-            Rare: 'rarity-bg-rare',
-            'Rare+': 'rarity-bg-rare-plus',
-            Epic: 'rarity-bg-epic',
-            Legendary: 'rarity-bg-legendary',
-            Mythic: 'rarity-bg-mythic',
-        };
-        const bgClass = RARITY_BG_CLASSES[finalRarity];
-        const progress = 100 - (timeLeft / DURATION) * 100;
-
-        return (
-             <div 
-                className="fixed inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center p-4 z-50 animate-fadeIn cursor-pointer"
-                onClick={handleClick}
-            >
-                <div className={`relative p-6 md:p-8 rounded-2xl shadow-2xl border-2 ${RARITY_BORDER_COLORS[finalRarity]} ${bgClass} w-full max-w-lg pointer-events-none`}>
-                    <div className="text-center">
-                        <h2 className={`font-cinzel text-3xl md:text-4xl mb-6 drop-shadow-lg ${RARITY_COLORS[finalRarity]}`}>
-                            {finalRarity} Artifact Forged!
-                        </h2>
-                    </div>
-
-                    <div className="mb-6">
-                        <ItemCard item={finalItem} />
-                    </div>
-        
-                    <div className="w-full max-w-sm mx-auto">
-                        <div className="w-full bg-black/60 rounded-full h-2.5 border border-gray-600 p-0.5">
-                            <div
-                                className="h-full rounded-full bg-gray-400"
-                                style={{ width: `${progress}%`, transition: 'width 100ms linear' }}
-                            ></div>
-                        </div>
-                        <p className="text-sm text-gray-400 mt-2 text-center">Continuing journey... (Click to accelerate)</p>
-                    </div>
-                </div>
-            </div>
-        );
-    }
 
     return (
         <div className="relative flex flex-col justify-center animate-fadeIn bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-gray-900 via-purple-950 to-black p-4 gap-3">
@@ -475,7 +378,7 @@ const DeckOfWhispersPhase: React.FC<DeckOfWhispersPhaseProps> = ({ item, onCompl
                     {ritualLog.map((entry, index) => <FormattedRitualLogEntry key={index} entry={entry} />)}
                 </div>
                 
-                {!finalRarity && !isHelpVisible && (
+                {!isComplete && !isHelpVisible && (
                     <div className="text-center">
                         <button 
                             onClick={() => runSimulation(true)}

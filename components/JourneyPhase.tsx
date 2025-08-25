@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import type { Player, PathNode, JourneyNode, JourneyEventType } from '../types';
 import PlayerStats from './PlayerStats';
-import { Loader, Gift, Heart, AlertTriangle, HelpCircle, Store, GitBranch, Sword, Flame, Trophy, Book } from 'lucide-react';
+import { Loader, Gift, Heart, AlertTriangle, HelpCircle, Store, GitBranch, Sword, Flame, Trophy, Book, User, Download } from 'lucide-react';
 import { GRID_WIDTH, GRID_HEIGHT } from '../utils/pathfinding';
 
 interface JourneyPhaseProps {
@@ -15,6 +15,8 @@ interface JourneyPhaseProps {
   onNextStep: () => void;
   onSetMouseInfluence: (influence: 'up' | 'down' | null) => void;
 }
+
+const IS_DEV_MODE = true;
 
 const nodeIcons: Record<JourneyEventType, React.ReactNode> = {
     treasure: <Gift className="w-full h-full text-yellow-400" />,
@@ -32,14 +34,15 @@ const JourneyPhase: React.FC<JourneyPhaseProps> = ({
   const mapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isPaused || !mapImageUrl || path.length === 0) return;
+    // The journey logic should run even without a map image.
+    if (isPaused || path.length === 0) return;
 
     const timer = setInterval(() => {
       onNextStep();
     }, 350);
 
     return () => clearInterval(timer);
-  }, [isPaused, onNextStep, mapImageUrl, path.length]);
+  }, [isPaused, onNextStep, path.length]);
 
   const imgSrc = mapImageUrl && mapImageUrl.startsWith('http')
     ? mapImageUrl
@@ -83,6 +86,19 @@ const JourneyPhase: React.FC<JourneyPhaseProps> = ({
   const handleMouseLeave = () => {
     onSetMouseInfluence(null);
   };
+  
+  const handleDownload = (base64Data: string, filename: string) => {
+    if (!base64Data || base64Data.startsWith('http')) {
+        console.warn('Download button is only for AI-generated base64 images.');
+        return;
+    }
+    const link = document.createElement('a');
+    link.href = `data:image/png;base64,${base64Data}`;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   return (
     <div className="flex flex-col md:flex-row items-start animate-fadeIn gap-8">
@@ -121,10 +137,30 @@ const JourneyPhase: React.FC<JourneyPhaseProps> = ({
           onMouseLeave={handleMouseLeave}
           className="w-full h-96 bg-black/30 rounded-lg border-2 border-purple-800/50 flex items-center justify-center relative overflow-hidden cursor-crosshair"
         >
-          {mapImageUrl && path.length > 0 ? (
+          {/* Background: Render map image if available, otherwise show loader text */}
+          {mapImageUrl ? (
+             <img src={imgSrc} alt="Journey Map" className="w-full h-full object-cover" />
+          ) : (
+            <div className="flex flex-col items-center text-gray-400">
+                <Loader className="w-12 h-12 animate-spin text-purple-400 mb-4" />
+                <p>Charting the unknown...</p>
+            </div>
+          )}
+
+          {IS_DEV_MODE && mapImageUrl && !mapImageUrl.startsWith('http') && (
+            <button
+              onClick={() => handleDownload(mapImageUrl, `journey-map-${Date.now()}.png`)}
+              className="absolute top-2 right-2 p-1.5 bg-black/50 rounded-full text-white/80 hover:bg-blue-800 hover:text-white transition-colors z-10"
+              title="Download Map Image"
+            >
+              <Download className="w-5 h-5" />
+            </button>
+          )}
+
+          {/* Foreground: Render path and player icon if the journey has started */}
+          {path.length > 0 && (
              <>
-                <img src={imgSrc} alt="Journey Map" className="w-full h-full object-cover" />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent pointer-events-none"></div>
+                {mapImageUrl && <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent pointer-events-none"></div>}
 
                 <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
                     <path d={pathData} stroke="rgba(250, 204, 21, 0.3)" strokeWidth="1" fill="none" strokeDasharray="2 2" />
@@ -145,21 +181,20 @@ const JourneyPhase: React.FC<JourneyPhaseProps> = ({
                 ))}
                 
                 <div 
-                    className="absolute w-8 h-8 bg-center bg-cover rounded-full shadow-lg border-2 border-yellow-300 animate-pulse-glow" 
+                    className="absolute w-8 h-8 rounded-full shadow-lg border-2 border-yellow-300 animate-pulse-glow overflow-hidden bg-gray-800"
                     style={{ 
                         left: `calc(${playerX}% - 16px)`, 
                         top: `calc(${playerY}% - 16px)`,
-                        backgroundImage: `url(https://i.pravatar.cc/100?u=${player.name})`,
                         transition: 'left 350ms linear, top 350ms linear'
                     }}>
+                        <img 
+                            src={`https://i.pravatar.cc/40?u=${encodeURIComponent(player.name)}`} 
+                            alt="Player Icon"
+                            className="w-full h-full object-cover"
+                        />
                 </div>
             </>
-        ) : (
-            <div className="flex flex-col items-center text-gray-400">
-                <Loader className="w-12 h-12 animate-spin text-purple-400 mb-4" />
-                <p>Charting the unknown...</p>
-            </div>
-        )}
+          )}
         </div>
       </div>
     </div>

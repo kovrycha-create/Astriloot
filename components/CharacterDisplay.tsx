@@ -2,7 +2,9 @@ import React from 'react';
 import type { Player, Enemy, StatusEffect } from '../types';
 import HealthBar from './HealthBar';
 import AdvancedStatsTooltip from './AdvancedStatsTooltip';
-import { Sword, Shield, Droplets, Bone, Info, Flame } from 'lucide-react';
+import { Sword, Shield, Droplets, Bone, Info, Flame, User, Download } from 'lucide-react';
+
+const IS_DEV_MODE = true;
 
 interface DamageNumberDisplayInfo {
     id: number;
@@ -49,15 +51,38 @@ const DamageNumber: React.FC<{ amount: number; isCrit: boolean; style: React.CSS
 const CharacterDisplay: React.FC<CharacterDisplayProps> = ({ character, isPlayer = false, onShowAdvancedStats, showAdvancedStats, animation, damageNumbers = [] }) => {
   const isEnemy = 'imageBase64' in character;
   
-  const imageUrl = isEnemy 
-    ? (character.imageBase64 ? `data:image/png;base64,${character.imageBase64}` : `https://api.dicebear.com/8.x/lorelei/svg?seed=${character.name.replace(/\s/g, '')}`) 
-    : `https://i.pravatar.cc/400?u=${character.name}`;
+  const handleDownload = (base64Data: string, filename: string) => {
+    if (!base64Data || base64Data.startsWith('http')) return;
+    const link = document.createElement('a');
+    link.href = `data:image/png;base64,${base64Data}`;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  let imageUrl;
+  if (isEnemy && character.imageBase64) {
+    if (character.imageBase64.startsWith('http')) {
+        imageUrl = character.imageBase64;
+    } else {
+        imageUrl = `data:image/png;base64,${character.imageBase64}`;
+    }
+  } else if (isEnemy) {
+    // Fallback for enemy if no image is loaded
+    imageUrl = `https://api.dicebear.com/8.x/lorelei/svg?seed=${encodeURIComponent(character.name)}`;
+  } else {
+    // Player image
+    imageUrl = `https://i.pravatar.cc/300?u=${encodeURIComponent(character.name)}`;
+  }
+
+  const canDownload = isEnemy && character.imageBase64 && !character.imageBase64.startsWith('http');
 
   return (
     <div className={`flex flex-col items-center gap-4 transition-all duration-500 ${isPlayer ? 'items-start' : 'items-end'}`}>
       <div className="relative"> {/* Wrapper to position the tooltip correctly */}
         <div className={`relative w-48 h-48 md:w-64 md:h-64 rounded-xl border-2 overflow-hidden shadow-lg ${isPlayer ? 'border-purple-700/50 shadow-purple-900/50 animate-pulse-glow' : 'border-red-700/50 shadow-red-900/50 animate-pulse-glow-red'} ${animation === 'double-strike' ? 'animate-double-strike-pulse' : ''} ${animation === 'crit' ? 'animate-crit-border-flash' : ''}`}>
-          <img src={imageUrl} alt={character.name} className="w-full h-full object-cover" />
+           <img src={imageUrl} alt={character.name} className="w-full h-full object-cover bg-gray-800" />
           
            {/* Animation Overlays */}
           {animation === 'crit' && (
@@ -88,6 +113,16 @@ const CharacterDisplay: React.FC<CharacterDisplayProps> = ({ character, isPlayer
                   );
               })}
           </div>
+
+          {isEnemy && IS_DEV_MODE && canDownload && (
+            <button 
+              onClick={() => handleDownload(character.imageBase64!, `${character.name.replace(/\s+/g, '-')}.png`)}
+              className="absolute top-2 left-2 p-1.5 bg-black/50 rounded-full text-white/80 hover:bg-blue-800 hover:text-white transition-colors z-10"
+              title="Download Enemy Image"
+            >
+                <Download className="w-5 h-5" />
+            </button>
+          )}
 
           {isPlayer && onShowAdvancedStats && (
               <button 

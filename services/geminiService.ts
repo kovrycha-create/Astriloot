@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import type { Enemy, CombatOutcome, Item, JourneyEvent, JourneyEventType } from '../types';
 
@@ -6,6 +7,11 @@ if (!process.env.API_KEY) {
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+// In-memory cache for generated images. Key: enemy name, Value: base64 string
+const enemyImageCache = new Map<string, string>();
+const itemImageCache = new Map<string, string>();
+
 
 const procEffectSchema = {
     type: Type.OBJECT,
@@ -49,6 +55,7 @@ const enemySchema = {
         critDamage: { type: Type.INTEGER, description: "The creature's base critical damage multiplier (e.g., 150 for 150%)." },
         doubleStrikeChance: { type: Type.INTEGER, description: "The creature's base double strike chance (e.g., 2 for 2%)." },
         blockChance: { type: Type.INTEGER, description: "The creature's base block chance percentage (e.g., 5 for 5%)." },
+        vasDropped: { type: Type.INTEGER, description: "Amount of Vas (common currency) dropped on defeat. Should be a reasonable amount for the creature's level." },
         loot: {
             type: Type.OBJECT,
             description: "An item the creature might drop. Can be null.",
@@ -57,11 +64,18 @@ const enemySchema = {
         },
         activeStatusEffects: {
             type: Type.ARRAY,
-            items: { type: Type.OBJECT, properties: {} },
             description: "Should always be an empty array.",
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    type: { type: Type.STRING, enum: ['Bleed', 'Poison', 'Burn'] },
+                    damage: { type: Type.INTEGER },
+                    duration: { type: Type.INTEGER },
+                },
+            }
         }
     },
-    required: ["name", "level", "description", "maxHealth", "attack", "defense", "critChance", "critDamage", "doubleStrikeChance", "blockChance", "loot", "activeStatusEffects"],
+    required: ["name", "level", "description", "maxHealth", "attack", "defense", "critChance", "critDamage", "doubleStrikeChance", "blockChance", "vasDropped", "loot", "activeStatusEffects"],
 };
 
 const journeyEventOutcomeSchema = {
@@ -79,18 +93,27 @@ const journeyEventOutcomeSchema = {
     required: ["xpGained", "healthChange", "itemDropped"],
 };
 
+const priceSchema = {
+    type: Type.OBJECT,
+    description: "The cost of the item in one or both currencies. At least one currency must be present.",
+    properties: {
+        vas: { type: Type.INTEGER, nullable: true, description: "Cost in Vas, the common currency." },
+        ae: { type: Type.INTEGER, nullable: true, description: "Cost in Arcane Essence (AE), the rare currency." },
+    },
+};
+
 const shopItemSchema = {
     type: Type.OBJECT,
     properties: {
         id: { type: Type.STRING, description: "A unique ID for the item, e.g., 'potion_1' or 'sword_of_embers'." },
         name: { type: Type.STRING, description: "The item's name." },
         description: { type: Type.STRING, description: "A brief, flavorful description." },
-        cost: { type: Type.INTEGER, description: "The cost in Arcane Essence. Should be balanced for the player's level." },
+        price: priceSchema,
         type: { type: Type.STRING, enum: ['potion', 'item'], description: "The type of shop item." },
         healthValue: { type: Type.INTEGER, nullable: true, description: "If it's a potion, how much health it restores." },
         itemBase: { ...itemSchema, nullable: true, description: "If it's an item, the base stats object. Omit rarity." }
     },
-    required: ["id", "name", "description", "cost", "type"]
+    required: ["id", "name", "description", "price", "type"]
 };
 
 const possibleOutcomeSchema = {
@@ -116,15 +139,25 @@ const dilemmaChoiceSchema = {
     required: ["text", "possibleOutcomes"],
 };
 
+const valueBuySchema = {
+    type: Type.OBJECT,
+    properties: {
+        enabled: { type: Type.BOOLEAN },
+        itemId: { type: Type.STRING, nullable: true, description: "The ID of an item from the main inventory that is the value buy." },
+        discountPct: { type: Type.NUMBER, nullable: true, description: "The discount percentage as a decimal (e.g., 0.3 for 30% off)." },
+    },
+    required: ["enabled"],
+};
+
 const journeyEventSchema = {
     type: Type.OBJECT,
     properties: {
-        type: { type: Type.STRING, enum: ['treasure', 'shrine', 'trap', 'discovery', 'merchant', 'dilemma'], description: "The type of event." },
+        type: { type: Type.STRING, enum: ['treasure', 'shrine', 'trap', 'discovery', 'merchant', 'dilemma', 'echoing_cairn'], description: "The type of event." },
         narrative: { type: Type.STRING, description: "A brief, two to three sentence, evocative description of the event." },
         outcome: {
             ...journeyEventOutcomeSchema,
             nullable: true,
-            description: "Outcome for standard events. Null for merchant or dilemma events."
+            description: "Outcome for standard events. Null for merchant, dilemma, or echoing_cairn events."
         },
         inventory: {
             type: Type.ARRAY,
@@ -135,8 +168,19 @@ const journeyEventSchema = {
         choices: {
             type: Type.ARRAY,
             nullable: true,
-            description: "An array of choices for the player. Only for dilemma events.",
+            description: "An array of choices for the player. Only for dilemma or echoing_cairn events.",
             items: dilemmaChoiceSchema
+        },
+        locationTag: {
+            type: Type.STRING,
+            enum: ['camp', 'town'],
+            nullable: true,
+            description: "For merchant events, specifies the location type. Use 'camp'."
+        },
+        valueBuy: {
+            ...valueBuySchema,
+            nullable: true,
+            description: "For merchant events, specifies a special deal."
         }
     },
     required: ["type", "narrative"],
@@ -146,14 +190,15 @@ const journeyEventSchema = {
 export const generateJourneyEvent = async (playerLevel: number, victories: number, eventType: JourneyEventType): Promise<JourneyEvent> => {
     let prompt;
     if (eventType === 'merchant') {
-         prompt = `You are a dungeon master for an idle RPG. Generate a 'merchant' journey event for a level ${playerLevel} hero.
-The merchant should have a unique, thematic description in the 'narrative' field.
-The 'inventory' should contain 2-4 items for sale.
-Items can be health potions or base items (weapons/armor).
-The costs should be balanced for a level ${playerLevel} hero, ranging from 20 to 100 essence.
-- Health potions should have a 'healthValue'. 'itemBase' should be null.
-- Base items should have an 'itemBase' object. 'healthValue' should be null.
-Return a single JSON object matching the required schema. The 'outcome' and 'choices' properties must be null.`;
+         prompt = `You are a dungeon master for an idle RPG with a dual-currency economy: common 'Vas' and rare 'Arcane Essence' (ae).
+Generate a 'merchant' journey event for a level ${playerLevel} hero.
+- The merchant's 'narrative' field should be unique and thematic.
+- The 'locationTag' should be 'camp'.
+- The 'inventory' should contain 2-4 items.
+- Prices should be balanced for a level ${playerLevel} hero. Use Vas for common items (potions), AE for powerful item bases, and sometimes a mix of both.
+- For example: A health potion might cost { "vas": 150 }. A basic sword might cost { "vas": 400 }. A magical item base might cost { "ae": 50 }, or a powerful one could cost { "vas": 500, "ae": 25 }.
+- The 'valueBuy' should have enabled: false, as this is a simple camp merchant.
+- Return a single JSON object matching the required schema. The 'outcome' and 'choices' properties must be null.`;
     } else if (eventType === 'dilemma') {
         prompt = `You are a dungeon master for an idle RPG. Generate a 'dilemma' journey event for a level ${playerLevel} hero.
 The event must be of type 'dilemma'.
@@ -178,6 +223,7 @@ Return a single JSON object matching the required schema. The top-level 'outcome
 ${eventTypeInstruction}
 The outcome (XP, health change, loot) should be balanced for the hero's level.
 For 'shrine' events, healthChange should be positive. ${trapDamageInstruction} For 'treasure' events, an item should be dropped. For 'discovery' events, award some XP.
+For 'echoing_cairn' events, the 'outcome' must be null. The narrative should describe a mysterious, humming stone that seems to react to the hero's memories.
 Return a single JSON object matching the required schema. The item should have base stats, its final power will be determined by a game mechanic. Items can have bonus stats like critChance, critDamage, or on-hit procEffects. The 'inventory' and 'choices' properties must be null.`;
     }
 
@@ -206,8 +252,10 @@ export const generateEnemy = async (difficulty: number, playerLevel: number, for
 
     const prompt = `Generate a unique, fantasy RPG monster for a level ${playerLevel} hero who has defeated ${difficulty} enemies. The monster should be a suitable challenge.
 The monster's level must be ${playerLevel}.
-Thematically, for low-level heroes (1-5), generate common fantasy creatures like goblins, wolves, or large insects. For mid-level heroes (6-15), create more formidable foes like orcs, trolls, or minor elementals. For high-level heroes (16+), generate epic and dangerous creatures like drakes, demons, or powerful constructs.
-The stats (health, attack, defense, critChance, critDamage, doubleStrikeChance, blockChance) should be balanced for the hero's level. ${lootInstruction} The 'activeStatusEffects' property must be an empty array.`;
+The monster's stats (health, attack, defense, etc.) should be balanced for a hero of the same level. A moderately geared hero should be able to win, but it should be a challenge. Avoid making the monster overwhelmingly powerful or trivially easy.
+Thematically, for low-level heroes (1-5), generate common fantasy creatures like wolves, or large insects. For mid-level heroes (6-15), create more formidable foes like orcs, trolls, or minor elementals. For high-level heroes (16+), generate epic and dangerous creatures like drakes, demons, or powerful constructs.
+It MUST drop an amount of 'vasDropped' (common currency), appropriate for its level. e.g. a level 1 enemy might drop 10-20 vas, a level 20 enemy might drop 200-300 vas.
+${lootInstruction} The 'activeStatusEffects' property must be an empty array.`;
 
     const response = await ai.models.generateContent({
         model: "gemini-2.5-flash",
@@ -260,7 +308,11 @@ export const generateMapImage = async (prompt: string): Promise<string> => {
 }
 
 
-export const generateEnemyImage = async (description: string): Promise<string> => {
+export const generateEnemyImage = async (description: string, enemyName: string): Promise<string> => {
+    if (enemyImageCache.has(enemyName)) {
+        return enemyImageCache.get(enemyName)!;
+    }
+
     const prompt = `${description}. Dark fantasy digital painting, epic, cinematic lighting, high detail.`;
     
     const response = await ai.models.generateImages({
@@ -274,19 +326,56 @@ export const generateEnemyImage = async (description: string): Promise<string> =
     });
 
     if (response.generatedImages && response.generatedImages.length > 0) {
-        return response.generatedImages[0].image.imageBytes;
+        const imageBytes = response.generatedImages[0].image.imageBytes;
+        enemyImageCache.set(enemyName, imageBytes); // Cache the new image
+        return imageBytes;
     }
     throw new Error("Image generation failed");
+};
+
+export const generateItemImage = async (item: Item): Promise<string> => {
+    if (itemImageCache.has(item.name)) {
+        return itemImageCache.get(item.name)!;
+    }
+
+    const prompt = `A single, high-quality fantasy RPG item icon. The item is a ${item.rarity} ${item.type} named "${item.name}". Description: "${item.description}". The icon should be on a dark, neutral background. No text. Digital art style.`;
+
+    const response = await ai.models.generateImages({
+        model: 'imagen-3.0-generate-002',
+        prompt: prompt,
+        config: {
+            numberOfImages: 1,
+            outputMimeType: 'image/png',
+            aspectRatio: '1:1',
+        },
+    });
+
+    if (response.generatedImages && response.generatedImages.length > 0) {
+        const imageBytes = response.generatedImages[0].image.imageBytes;
+        itemImageCache.set(item.name, imageBytes);
+        return imageBytes;
+    }
+    throw new Error("Item image generation failed");
 };
 
 export const streamCombatNarrative = async function*(outcome: CombatOutcome): AsyncGenerator<string, void, undefined> {
     const { actorName, targetName, damage, isPlayer, isCrit, isDoubleStrike, didProc, didBlock } = outcome;
     
+    // Use template for blocks, as it's a simple event
     if (didBlock) {
         yield `${targetName} deftly blocks the attack from ${actorName}!`;
         return;
     }
 
+    const isSignificantEvent = isCrit || isDoubleStrike || didProc;
+
+    // Use template for normal hits
+    if (!isSignificantEvent && damage > 0) {
+        yield `${actorName} strikes ${targetName} for ${damage} damage.`;
+        return;
+    }
+
+    // Only call AI for significant events (crit, double strike, proc)
     let prompt = isPlayer
         ? `The hero, ${actorName}, attacks the ${targetName}, dealing ${damage} damage.`
         : `The ${actorName} retaliates against the hero, ${targetName}, for ${damage} damage.`;
@@ -303,23 +392,6 @@ export const streamCombatNarrative = async function*(outcome: CombatOutcome): As
         contents: prompt,
         config: {
             temperature: 0.8,
-            thinkingConfig: { thinkingBudget: 0 }
-        },
-    });
-
-    for await (const chunk of responseStream) {
-        yield chunk.text;
-    }
-};
-
-export const streamIdleNarrative = async function*(victories: number): AsyncGenerator<string, void, undefined> {
-    const prompt = `You are a dungeon master. A hero has won ${victories} battles. Write a single, short, evocative sentence describing their journey onward as they search for the next foe.`;
-
-    const responseStream = await ai.models.generateContentStream({
-        model: "gemini-2.5-flash",
-        contents: prompt,
-        config: {
-            temperature: 0.9,
             thinkingConfig: { thinkingBudget: 0 }
         },
     });

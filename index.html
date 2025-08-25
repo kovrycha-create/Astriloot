@@ -27,12 +27,12 @@
       }
       @keyframes pulse-glow {
         0%, 100% {
-            box-shadow: 0 0 10px rgba(74, 222, 128, 0.5), 0 0 20px rgba(74, 222, 128, 0.3);
-            border-color: rgba(74, 222, 128, 0.7);
+            box-shadow: 0 0 10px rgba(168, 85, 247, 0.5), 0 0 20px rgba(168, 85, 247, 0.3);
+            border-color: rgba(168, 85, 247, 0.7);
         }
         50% {
-            box-shadow: 0 0 20px rgba(74, 222, 128, 0.8), 0 0 30px rgba(74, 222, 128, 0.5);
-            border-color: rgba(74, 222, 128, 1);
+            box-shadow: 0 0 20px rgba(168, 85, 247, 0.8), 0 0 30px rgba(168, 85, 247, 0.5);
+            border-color: rgba(168, 85, 247, 1);
         }
       }
        @keyframes pulse-glow-red {
@@ -41,6 +41,26 @@
         }
         50% {
             box-shadow: 0 0 20px rgba(239, 68, 68, 0.8), 0 0 30px rgba(239, 68, 68, 0.5);
+        }
+      }
+      @keyframes pulse-glow-cyan {
+        0%, 100% {
+            box-shadow: 0 0 10px rgba(34, 211, 238, 0.5), 0 0 20px rgba(34, 211, 238, 0.3);
+            border-color: rgba(34, 211, 238, 0.7);
+        }
+        50% {
+            box-shadow: 0 0 20px rgba(34, 211, 238, 0.8), 0 0 30px rgba(34, 211, 238, 0.5);
+            border-color: rgba(34, 211, 238, 1);
+        }
+      }
+      @keyframes pulse-glow-green {
+        0%, 100% {
+            box-shadow: 0 0 10px rgba(47, 126, 4, 0.5), 0 0 20px rgba(47, 126, 4, 0.3);
+            border-color: rgba(47, 126, 4, 0.7);
+        }
+        50% {
+            box-shadow: 0 0 20px rgba(47, 126, 4, 0.8), 0 0 30px rgba(47, 126, 4, 0.5);
+            border-color: rgba(47, 126, 4, 1);
         }
       }
        @keyframes pulse-glow-yellow {
@@ -400,6 +420,15 @@
       }
       .achievement-scrollbar::-webkit-scrollbar-thumb:hover {
         background: #6b7280;
+      }
+
+      /* Character Select Animations */
+      @keyframes float {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+      }
+      .animate-float {
+        animation: float 4s ease-in-out infinite;
       }
     </style>
   <script type="importmap">

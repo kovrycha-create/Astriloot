@@ -1,15 +1,24 @@
+
+
+
+
+
+
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import type { Enemy, Player, Item, JourneyEvent, Rarity, CombatLogEntry, StatusEffect, PathNode, JourneyNode, LootPhaseResult, ShopItem, JourneyEventOutcome, JourneyEventType, DilemmaChoice, RunStats, RunHistoryEntry, RunHistoryEntryType, CampState, CampUpgrades, PlayerAchievements, Achievement, TrackableStats, Elixir, TemporaryBuff, EchoingCairnChoice } from './types';
+import type { Enemy, Player, Item, JourneyEvent, Rarity, CombatLogEntry, StatusEffect, PathNode, JourneyNode, LootPhaseResult, ShopItem, JourneyEventOutcome, JourneyEventType, DilemmaChoice, RunStats, RunHistoryEntry, RunHistoryEntryType, CampState, CampUpgrades, PlayerAchievements, Achievement, TrackableStats, Elixir, TemporaryBuff, EchoingCairnChoice, Equipment, Enchant, Gem, Socket, CharacterData, ActiveElixirEffect } from './types';
 import { GameStateEnum } from './types';
-import { PLAYER_INITIAL_STATE, RARITY_STAT_MODIFIERS, RARITY_ESSENCE_MAP, INITIAL_CAMP_STATE, UPGRADE_COSTS, ACHIEVEMENTS_DATA, getInitialPlayerAchievements, RARITY_RANK } from './constants';
+import { RARITY_STAT_MODIFIERS, RARITY_ESSENCE_MAP, INITIAL_CAMP_STATE, UPGRADE_COSTS, ACHIEVEMENTS_DATA, getInitialPlayerAchievements, RARITY_RANK, ENCHANT_COST_MODIFIERS } from './constants';
 import * as geminiService from './services/geminiService';
 import * as mockService from './services/mockService';
 import { generateNodes, calculateNextStep } from './utils/pathfinding';
 import { GRID_HEIGHT, GRID_WIDTH } from './utils/pathfinding';
+import CharacterSelectionPhase from './components/CharacterSelectionPhase';
 import AutomatedCombatPhase from './components/AutomatedCombatPhase';
 import JourneyPhase from './components/JourneyPhase';
 import LoadingPhase from './components/LoadingPhase';
 import LootPhase from './components/LootPhase';
+import ArtifactRevealPhase from './components/ArtifactRevealPhase';
 import JourneyEventPhase from './components/JourneyEventPhase';
 import DeckOfWhispersPhase from './components/DeckOfWhispersPhase';
 import GearChoicePhase from './components/GearChoicePhase';
@@ -19,6 +28,8 @@ import DilemmaResultPhase from './components/DilemmaResultPhase';
 import CampPhase from './components/CampPhase';
 import AchievementsPhase from './components/AchievementsPhase';
 import EchoingCairnPhase from './components/EchoingCairnPhase';
+import EnchantingPhase from './components/EnchantingPhase';
+import GemSocketingPhase from './components/GemSocketingPhase';
 import Toast from './components/Toast';
 import { Trophy } from 'lucide-react';
 
@@ -38,53 +49,82 @@ const INITIAL_RUN_STATS: RunStats = {
   dilemmasFaced: 0,
 };
 
+interface MetaProgress {
+  essence: number;
+  vas: number;
+  enchants: Enchant[];
+  gems: Gem[];
+}
+
+
 // Helper function to calculate total stats from base and equipment
 const calculateTotalStats = (player: Player): Player => {
-    const totalStats = {
-        ...PLAYER_INITIAL_STATE, // Start with base stats
-        ...player, // Overlay current player state (like health, level, xp)
-        attack: player.attack,
-        defense: player.defense,
-        critChance: player.critChance,
-        critDamage: player.critDamage,
-        doubleStrikeChance: player.doubleStrikeChance,
-        blockChance: player.blockChance,
-    };
+    // Create a mutable copy of the player object to hold the calculated stats.
+    // This preserves non-stat properties like name, level, health, etc.
+    const calculatedPlayer = { ...player };
 
-    const equipment = Object.values(player.equipment).filter(item => item !== null) as Item[];
+    // Get all equipped items.
+    const equipment = Object.values(player.equipment).filter(Boolean) as Item[];
 
     for (const item of equipment) {
-        totalStats.attack += item.attack || 0;
-        totalStats.defense += item.defense || 0;
-        totalStats.critChance += item.critChance || 0;
-        totalStats.critDamage += item.critDamage || 0;
-        totalStats.doubleStrikeChance += item.doubleStrikeChance || 0;
-        totalStats.blockChance += item.blockChance || 0;
+        calculatedPlayer.attack += item.attack || 0;
+        calculatedPlayer.defense += item.defense || 0;
+        calculatedPlayer.critChance += item.critChance || 0;
+        calculatedPlayer.critDamage += item.critDamage || 0;
+        calculatedPlayer.doubleStrikeChance += item.doubleStrikeChance || 0;
+        calculatedPlayer.blockChance += item.blockChance || 0;
+
+        // Add stats from enchants on the item.
+        if (item.enchant) {
+            for (const effect of item.enchant.effects) {
+                if (effect.stat !== 'vampiric' && calculatedPlayer[effect.stat] !== undefined) {
+                    calculatedPlayer[effect.stat] += effect.value;
+                }
+            }
+        }
+        
+        // Add stats from gems socketed in the item.
+        if (item.sockets) {
+            for (const socket of item.sockets) {
+                if (socket.gem) {
+                    for (const effect of socket.gem.effects) {
+                         if (calculatedPlayer[effect.stat] !== undefined) {
+                            calculatedPlayer[effect.stat] += effect.value;
+                        }
+                    }
+                }
+            }
+        }
     }
     
+    // Add stats from temporary buffs.
     for (const buff of player.temporaryBuffs) {
-        if (totalStats[buff.stat] !== undefined) {
-            totalStats[buff.stat] += buff.value;
+        if (calculatedPlayer[buff.stat] !== undefined) {
+            calculatedPlayer[buff.stat] += buff.value;
         }
     }
 
+    // Apply percentage-based effects from elixirs.
     if (player.activeElixir?.type === 'BONUS_DEFENSE_PERCENT_COMBAT') {
-        const defenseBonus = Math.floor(totalStats.defense * (player.activeElixir.value / 100));
-        totalStats.defense += defenseBonus;
+        const defenseBonus = Math.floor(calculatedPlayer.defense * (player.activeElixir.value / 100));
+        calculatedPlayer.defense += defenseBonus;
     }
 
-    return totalStats;
+    return calculatedPlayer;
 };
 
 
 const App: React.FC = () => {
-  const [gameState, setGameState] = useState<GameStateEnum>(GameStateEnum.JOURNEY);
-  const [player, setPlayer] = useState<Player>(PLAYER_INITIAL_STATE);
+  const [gameState, setGameState] = useState<GameStateEnum>(GameStateEnum.CHARACTER_SELECT);
+  const [player, setPlayer] = useState<Player | null>(null);
+  const [metaProgress, setMetaProgress] = useState<MetaProgress | null>(null);
   const [enemy, setEnemy] = useState<Enemy | null>(null);
   const [combatLog, setCombatLog] = useState<CombatLogEntry[]>([]);
   const [currentNarrative, setCurrentNarrative] = useState<string>('');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' | 'achievement' } | null>(null);
   const [victories, setVictories] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
   
   // Status Effects
   const [playerStatusEffects, setPlayerStatusEffects] = useState<StatusEffect[]>([]);
@@ -102,6 +142,7 @@ const App: React.FC = () => {
   // Ritual & Loot state
   const [itemForRitual, setItemForRitual] = useState<Omit<Item, 'rarity'> | null>(null);
   const [ritualSource, setRitualSource] = useState<'combat' | 'event' | null>(null);
+  const [revealedArtifact, setRevealedArtifact] = useState<Item | null>(null);
   const [lastCombatResult, setLastCombatResult] = useState<LootPhaseResult>({ playerWon: false, xpGained: 0, itemDropped: null, levelUp: false });
   const [justReceivedTreasure, setJustReceivedTreasure] = useState(false);
   const [gearForChoice, setGearForChoice] = useState<{ equipped: Item; new: Item } | null>(null);
@@ -159,7 +200,7 @@ const App: React.FC = () => {
   const [achievementToastQueue, setAchievementToastQueue] = useState<Achievement[]>([]);
   const [isAchievementsVisible, setIsAchievementsVisible] = useState(false);
 
-  const playerWithStats = useMemo(() => calculateTotalStats(player), [player]);
+  const playerWithStats = useMemo(() => player ? calculateTotalStats(player) : null, [player]);
 
   const hasUnclaimedRewards = useMemo(() => {
     return Object.values(playerAchievements).some(ach => ach.unlockedTier > ach.claimedTier);
@@ -177,9 +218,12 @@ const App: React.FC = () => {
 
   const containerMaxWidthClass = useMemo(() => {
     switch (gameState) {
+        case GameStateEnum.CHARACTER_SELECT:
+            return 'max-w-4xl';
         case GameStateEnum.COMBAT:
         case GameStateEnum.GEAR_CHOICE:
         case GameStateEnum.DECK_OF_WHISPERS:
+        case GameStateEnum.ARTIFACT_REVEAL:
         case GameStateEnum.LOOT:
             return 'max-w-5xl';
         default:
@@ -204,7 +248,7 @@ const App: React.FC = () => {
 
   const updateBuffs = useCallback(() => {
     setPlayer(prevPlayer => {
-        if (prevPlayer.temporaryBuffs.length === 0) return prevPlayer;
+        if (!prevPlayer || prevPlayer.temporaryBuffs.length === 0) return prevPlayer;
 
         const expiredBuffs: string[] = [];
         const updatedBuffs = prevPlayer.temporaryBuffs
@@ -288,6 +332,7 @@ const App: React.FC = () => {
       }
       
       setPlayer(prevPlayer => {
+          if (!prevPlayer) return null;
           let newHealth = prevPlayer.health + outcome.healthChange;
           if (newHealth > prevPlayer.maxHealth) newHealth = prevPlayer.maxHealth;
           if (newHealth < 0) newHealth = 0;
@@ -302,8 +347,8 @@ const App: React.FC = () => {
               levelUp = true;
               newLevel += 1;
               newXp -= newXpToNextLevel;
-              newXpToNextLevel = Math.floor(prevPlayer.xpToNextLevel * 1.5);
-              newMaxHealth = Math.floor(prevPlayer.maxHealth * 1.2);
+              newXpToNextLevel = Math.floor(prevPlayer.xpToNextLevel * 1.35);
+              newMaxHealth = Math.floor(prevPlayer.maxHealth * 1.15);
               addToHistory('level-up', `Reached Level ${newLevel}!`);
               showToast(`Level up! You are now level ${newLevel}!`, 'success');
           }
@@ -330,33 +375,50 @@ const App: React.FC = () => {
           setItemForRitual(outcome.itemDropped);
           setRitualSource('event');
           setJustReceivedTreasure(true);
-          setGameState(GameStateEnum.DECK_OF_WHISPERS);
-      } else {
-          setIsJourneyPaused(false);
+      }
+
+      if (outcome.enchantDropped) {
+        setPlayer(prev => prev ? ({...prev, enchants: [...prev.enchants, outcome.enchantDropped!] }) : null);
+        showToast(`Received Enchant: ${outcome.enchantDropped.name}!`, 'success');
+      }
+      if (outcome.gemsDropped) {
+        setPlayer(prev => prev ? ({...prev, gems: [...prev.gems, ...outcome.gemsDropped!] }) : null);
+        showToast(`Found Gem: ${outcome.gemsDropped.map(g => g.name).join(', ')}!`, 'success');
       }
   }, [addToHistory, showToast, journeyEvent, handleUnlockAchievements, consecutiveTraps, updateBuffs]);
   
-  const generateAndSetJourney = useCallback(async (currentVictories: number, playerLevel: number) => {
+  const generateAndSetJourney = useCallback(async (currentVictories: number, playerLevel: number, activeElixir: ActiveElixirEffect | null) => {
       try {
           const { narrative, mapPrompt } = await service.generateJourneyAssets(currentVictories, playerLevel);
           setJourneyNarrative(narrative);
           const newMapImageUrl = await service.generateMapImage(mapPrompt);
           setMapImageUrl(newMapImageUrl);
-          const forceFirstNodePositive = player.activeElixir?.type === 'GUARANTEED_POSITIVE_EVENT';
+          const forceFirstNodePositive = activeElixir?.type === 'GUARANTEED_POSITIVE_EVENT';
           const generatedNodes = generateNodes(forceFirstNodePositive);
           setNodes(generatedNodes);
           setJourneyPath([{ x: 0, y: Math.floor(GRID_HEIGHT / 2) }]);
       } catch (error) {
           console.error("Failed to generate journey:", error);
           showToast("Failed to start journey. Using fallback.", "error");
-          setMapImageUrl(''); 
+          setMapImageUrl(null); 
           setNodes(generateNodes());
           setJourneyPath([{ x: 0, y: Math.floor(GRID_HEIGHT / 2) }]);
       }
-  }, [showToast, player.activeElixir]);
+  }, [showToast]);
 
   const startNewRun = useCallback(() => {
-      setPlayer(PLAYER_INITIAL_STATE);
+      if (!player) return;
+      const vasAfterPenalty = Math.floor(player.vas * 0.85); // Reduced from 20% to 15%
+      showToast(`Your journey ends... You lost ${player.vas - vasAfterPenalty} Vas.`, 'error');
+      
+      setMetaProgress({
+          essence: player.essence,
+          vas: vasAfterPenalty,
+          enchants: player.enchants,
+          gems: player.gems,
+      });
+
+      setPlayer(null);
       setVictories(0);
       setJourneyPath([]);
       setNodes([]);
@@ -367,11 +429,37 @@ const App: React.FC = () => {
       setRunHistory([]);
       setConsecutiveTraps(0);
       runHistoryIdCounter.current = 0;
-      generateAndSetJourney(0, 1);
-      setGameState(GameStateEnum.JOURNEY);
-  }, [generateAndSetJourney]);
+      setGameState(GameStateEnum.CHARACTER_SELECT);
+  }, [player, showToast]);
+
+  const handleCharacterSelect = useCallback((character: CharacterData) => {
+    const initialState = {
+        ...character.initialState,
+        essence: metaProgress?.essence || character.initialState.essence,
+        vas: metaProgress?.vas || character.initialState.vas,
+        enchants: metaProgress?.enchants || character.initialState.enchants,
+        gems: metaProgress?.gems || character.initialState.gems,
+    };
+
+    setPlayer(initialState);
+    setMetaProgress(null);
+
+    setJourneyPath([]);
+    setNodes([]);
+    setMapImageUrl(null);
+    setJourneyNarrative("A new adventure begins...");
+    setJustReceivedTreasure(false);
+    setRunStats(INITIAL_RUN_STATS);
+    setRunHistory([]);
+    setConsecutiveTraps(0);
+    runHistoryIdCounter.current = 0;
+
+    generateAndSetJourney(0, 1, initialState.activeElixir);
+    setGameState(GameStateEnum.JOURNEY);
+  }, [metaProgress, generateAndSetJourney]);
 
   const handleNextJourneyStep = useCallback(() => {
+      if (!player) return;
       setJourneyPath(prevPath => {
           const currentPos = prevPath[prevPath.length - 1];
           if (currentPos.x >= GRID_WIDTH - 1) {
@@ -382,7 +470,7 @@ const App: React.FC = () => {
           const collidedNode = nodes.find(node => node.x === currentPos.x && node.y === currentPos.y);
           if (collidedNode) {
               if (player.activeElixir?.type === 'GUARANTEED_POSITIVE_EVENT') {
-                  setPlayer(p => ({ ...p, activeElixir: null }));
+                  setPlayer(p => p ? ({ ...p, activeElixir: null }) : null);
                   showToast("Your Draught of Fortune-Seeker has been consumed.", 'info');
               }
               setIsJourneyPaused(true);
@@ -395,9 +483,10 @@ const App: React.FC = () => {
           const nextStep = calculateNextStep(currentPos, mouseInfluence);
           return [...prevPath, nextStep];
       });
-  }, [nodes, mouseInfluence, player.activeElixir, showToast]);
+  }, [nodes, mouseInfluence, player, showToast]);
 
   const handleCombatEnd = useCallback((playerWon: boolean, finalLog: CombatLogEntry[], combatStats: Partial<RunStats>) => {
+    if (!player) return;
     setRunStats(prev => ({
         ...prev,
         damageDealt: prev.damageDealt + (combatStats.damageDealt || 0),
@@ -419,7 +508,8 @@ const App: React.FC = () => {
         handleUnlockAchievements('doubleStrikesLanded', combatStats.doubleStrikes || 0);
 
         const xpGained = 50 + (enemy?.level || player.level) * 10;
-        const essenceGained = 10 + Math.floor(Math.random() * 15);
+        const essenceGained = 5 + Math.floor(Math.random() * 10) + (enemy?.level || player.level);
+        const vasGained = enemy?.vasDropped || 0;
         let xpBefore = player.xp;
         let newXp = player.xp + xpGained;
         let newLevel = player.level;
@@ -431,8 +521,8 @@ const App: React.FC = () => {
             levelUp = true;
             newLevel++;
             newXp -= newXpToNextLevel;
-            newXpToNextLevel = Math.floor(player.xpToNextLevel * 1.5);
-            newMaxHealth = Math.floor(player.maxHealth * 1.2);
+            newXpToNextLevel = Math.floor(player.xpToNextLevel * 1.35);
+            newMaxHealth = Math.floor(player.maxHealth * 1.15);
             addToHistory('level-up', `Reached Level ${newLevel}!`);
             showToast(`Level up! You are now level ${newLevel}!`, 'success');
         }
@@ -446,6 +536,7 @@ const App: React.FC = () => {
         addToHistory('victory', `Vanquished ${enemy?.name || 'a foe'}.`);
 
         setPlayer(prev => {
+            if (!prev) return null;
             let newActiveElixir = prev.activeElixir;
             if (newActiveElixir && (newActiveElixir.type === 'BONUS_DEFENSE_PERCENT_COMBAT' || newActiveElixir.type === 'GUARANTEED_DOUBLE_STRIKE_COMBAT')) {
                 const newDuration = newActiveElixir.duration - 1;
@@ -464,18 +555,31 @@ const App: React.FC = () => {
                 maxHealth: newMaxHealth,
                 health: levelUp ? newMaxHealth : prev.health, // Full heal on level up
                 essence: prev.essence + essenceGained,
+                vas: prev.vas + vasGained,
                 activeElixir: newActiveElixir,
             };
         });
 
-        const itemDropped = enemy?.loot ? { ...enemy.loot, rarity: 'Common' as Rarity } : null;
-        setLastCombatResult({ playerWon, xpGained, itemDropped, levelUp, finalLog, xpBefore, xpAfter: newXp, xpToNextLevel: newXpToNextLevel, combatStats });
+        const itemDropped: Item | null = enemy?.loot ? { ...enemy.loot, rarity: 'Common' as Rarity, imageBase64: null } : null;
+        const enchantDropped = enemy?.enchantDropped || null;
+        const gemsDropped = enemy?.gemsDropped || null;
+
+        if (enchantDropped) {
+             setPlayer(prev => prev ? ({...prev, enchants: [...prev.enchants, enchantDropped] }) : null);
+        }
+        if (gemsDropped) {
+             setPlayer(prev => prev ? ({...prev, gems: [...prev.gems, ...gemsDropped] }) : null);
+        }
+
+        setLastCombatResult({ playerWon, xpGained, itemDropped, enchantDropped, gemsDropped, levelUp, finalLog, xpBefore, xpAfter: newXp, xpToNextLevel: newXpToNextLevel, combatStats });
 
         if (itemDropped) {
             setItemForRitual(enemy.loot);
             setRitualSource('combat');
+            setGameState(GameStateEnum.DECK_OF_WHISPERS);
+        } else {
+            setGameState(GameStateEnum.LOOT);
         }
-        setGameState(GameStateEnum.LOOT);
     } else {
         setLastCombatResult({ playerWon, xpGained: 0, itemDropped: null, levelUp: false, finalLog, victoryCount: victories, runStats, runHistory });
         setGameState(GameStateEnum.LOOT);
@@ -493,9 +597,11 @@ const App: React.FC = () => {
     setCurrentNarrative('');
   }, []);
 
-  const handleRitualComplete = useCallback((baseItem: Omit<Item, 'rarity'>, rarity: Rarity) => {
+  const handleRitualComplete = useCallback(async (baseItem: Omit<Item, 'rarity'>, rarity: Rarity) => {
+    if (!player) return;
+
     const modifier = RARITY_STAT_MODIFIERS[rarity];
-    const finalItem: Item = {
+    const itemWithoutImage: Item = {
         ...baseItem,
         rarity: rarity,
         attack: Math.round((baseItem.attack || 0) * modifier),
@@ -506,6 +612,22 @@ const App: React.FC = () => {
         blockChance: baseItem.blockChance ? Math.round(baseItem.blockChance * modifier) : undefined,
     };
     
+    setIsLoading(true);
+    setLoadingMessage("Forging the artifact's likeness...");
+
+    let finalItem: Item;
+    try {
+        const imageBase64 = await service.generateItemImage(itemWithoutImage);
+        finalItem = { ...itemWithoutImage, imageBase64 };
+    } catch (error) {
+        console.error("Failed to generate item image:", error);
+        showToast("Failed to forge item's image, continuing without it.", "error");
+        finalItem = { ...itemWithoutImage, imageBase64: null };
+    }
+    
+    setIsLoading(false);
+    setLoadingMessage(null);
+
     handleUnlockAchievements('uncommonForged', rarity);
     handleUnlockAchievements('rareForged', rarity);
     handleUnlockAchievements('epicForged', rarity);
@@ -514,62 +636,111 @@ const App: React.FC = () => {
     addToHistory('item-forged', `Forged a ${rarity} ${finalItem.name}.`);
     setRunStats(prev => ({...prev, itemsForged: prev.itemsForged + 1}));
 
-    const equippedItem = player.equipment[finalItem.type];
-    if (equippedItem) {
-        setGearForChoice({ equipped: equippedItem, new: finalItem });
-        setGameState(GameStateEnum.GEAR_CHOICE);
-    } else {
-        setPlayer(prev => ({
+    setItemForRitual(null);
+    setRevealedArtifact(finalItem);
+    setGameState(GameStateEnum.ARTIFACT_REVEAL);
+  }, [player, addToHistory, showToast, handleUnlockAchievements]);
+
+  const handleArtifactRevealContinue = useCallback((revealedItem: Item) => {
+    if (!player) return;
+
+    setRevealedArtifact(null);
+
+    if (ritualSource === 'combat') {
+        setLastCombatResult(prev => ({
             ...prev,
-            equipment: { ...prev.equipment, [finalItem.type]: finalItem }
+            itemDropped: revealedItem
         }));
-        showToast(`Equipped ${finalItem.name}!`, 'success');
-        if (ritualSource === 'combat') {
-             setGameState(GameStateEnum.LOOT);
+        setGameState(GameStateEnum.LOOT);
+    } else { // From event
+        const equippedItem = player.equipment[revealedItem.type];
+        if (equippedItem) {
+            setGearForChoice({ equipped: equippedItem, new: revealedItem });
+            setGameState(GameStateEnum.GEAR_CHOICE);
         } else {
-             setIsJourneyPaused(false);
-             setGameState(GameStateEnum.JOURNEY);
+            setPlayer(prev => {
+                if (!prev) return null;
+                return { ...prev, equipment: { ...prev.equipment, [revealedItem.type]: revealedItem } };
+            });
+            showToast(`Equipped ${revealedItem.name}!`, 'success');
+            setIsJourneyPaused(false);
+            setGameState(GameStateEnum.JOURNEY);
         }
     }
-    setItemForRitual(null);
-  }, [player.equipment, ritualSource, addToHistory, showToast, handleUnlockAchievements]);
+  }, [player, ritualSource, showToast]);
 
   const handleGearChoice = useCallback((itemToKeep: Item, itemToDisenchant: Item) => {
-    setPlayer(prev => ({
-        ...prev,
-        equipment: { ...prev.equipment, [itemToKeep.type]: itemToKeep }
-    }));
+    if (!player) return;
+    setPlayer(prev => {
+        if (!prev) return null;
+        return {
+            ...prev,
+            equipment: { ...prev.equipment, [itemToKeep.type]: itemToKeep }
+        }
+    });
     const essenceGained = RARITY_ESSENCE_MAP[itemToDisenchant.rarity] || 1;
-    setPlayer(prev => ({ ...prev, essence: prev.essence + essenceGained }));
+    setPlayer(prev => prev ? ({ ...prev, essence: prev.essence + essenceGained }) : null);
     showToast(`Kept ${itemToKeep.name}, gained ${essenceGained} essence from ${itemToDisenchant.name}.`, 'success');
     setGearForChoice(null);
-    if (ritualSource === 'combat') {
-        setGameState(GameStateEnum.LOOT);
+    
+    const currentPos = journeyPath[journeyPath.length - 1];
+    if (currentPos && currentPos.x >= GRID_WIDTH - 1) {
+        generateAndSetJourney(victories, player.level, player.activeElixir);
+        setGameState(GameStateEnum.JOURNEY);
+        return;
+    }
+
+    if (victories > 0 && victories % 5 === 0) {
+        setGameState(GameStateEnum.CAMP);
     } else {
         setIsJourneyPaused(false);
         setGameState(GameStateEnum.JOURNEY);
     }
-  }, [ritualSource, showToast]);
+  }, [showToast, journeyPath, victories, player, generateAndSetJourney]);
 
   const handlePurchase = useCallback((shopItem: ShopItem) => {
-      if (player.essence < shopItem.cost) {
-          showToast("Not enough Arcane Essence!", "error");
+      if (!player) return;
+      const aeCost = shopItem.price.ae || 0;
+      const vasCost = shopItem.price.vas || 0;
+
+      if (player.essence < aeCost || player.vas < vasCost) {
+          showToast("Insufficient funds!", "error");
           return;
       }
-      setPlayer(p => ({...p, essence: p.essence - shopItem.cost}));
-      setRunStats(prev => ({...prev, essenceSpent: prev.essenceSpent + shopItem.cost}));
 
+      setPlayer(p => {
+          if (!p) return null;
+          return {
+            ...p,
+            essence: p.essence - aeCost,
+            vas: p.vas - vasCost,
+          }
+      });
+
+      if (aeCost > 0) {
+        setRunStats(prev => ({...prev, essenceSpent: prev.essenceSpent + aeCost}));
+      }
+
+      let purchased = false;
       if (shopItem.type === 'potion') {
           handleEventOutcome({ healthChange: shopItem.healthValue || 0, xpGained: 0, itemDropped: null });
-          showToast(`Purchased ${shopItem.name}.`, 'success');
-          // Remove from inventory
-          setJourneyEvent(prev => prev ? {...prev, inventory: prev.inventory?.filter(i => i.id !== shopItem.id) } : null);
+          purchased = true;
+      } else if (shopItem.type === 'gem' && shopItem.gem) {
+          setPlayer(p => p ? ({ ...p, gems: [...p.gems, shopItem.gem!] }) : null);
+          purchased = true;
       } else if (shopItem.itemBase) {
           setItemForRitual(shopItem.itemBase);
           setRitualSource('event');
           setGameState(GameStateEnum.DECK_OF_WHISPERS);
+          return; // Don't remove from inventory yet, ritual handles it
       }
-  }, [player.essence, handleEventOutcome, showToast]);
+
+      if (purchased) {
+          showToast(`Purchased ${shopItem.name}.`, 'success');
+          // Remove from inventory
+          setJourneyEvent(prev => prev ? {...prev, inventory: prev.inventory?.filter(i => i.id !== shopItem.id) } : null);
+      }
+  }, [player, handleEventOutcome, showToast]);
 
   const handleDilemmaResolve = useCallback((choice: DilemmaChoice) => {
       const rand = Math.random() * 100;
@@ -580,16 +751,18 @@ const App: React.FC = () => {
       }) || choice.possibleOutcomes[0]; // Failsafe
 
       addToHistory('event-dilemma-choice', `Dilemma: Chose to '${choice.text}'`);
-      handleEventOutcome(selectedOutcome.outcome);
       setDilemmaResult({ aftermath: selectedOutcome.aftermath, outcome: selectedOutcome.outcome });
       setGameState(GameStateEnum.DILEMMA_RESULT);
-  }, [handleEventOutcome, addToHistory]);
+  }, [addToHistory]);
 
   const handleEchoingCairnResolve = useCallback((choice: EchoingCairnChoice) => {
-    setPlayer(prev => ({
-        ...prev,
-        temporaryBuffs: [...prev.temporaryBuffs, choice.buff]
-    }));
+    setPlayer(prev => {
+        if (!prev) return null;
+        return {
+            ...prev,
+            temporaryBuffs: [...prev.temporaryBuffs, choice.buff]
+        }
+    });
     showToast(`You recall '${choice.historyEntry.description}' and feel empowered!`, 'success');
     
     // This event counts as an encounter for buff duration
@@ -600,11 +773,12 @@ const App: React.FC = () => {
   }, [showToast, updateBuffs]);
   
   const handlePurchaseUpgrade = useCallback((upgrade: keyof CampUpgrades) => {
+      if (!player) return;
       const currentLevel = campState.upgrades[upgrade];
       const cost = UPGRADE_COSTS[upgrade][currentLevel];
 
       if (player.essence >= cost) {
-          setPlayer(p => ({ ...p, essence: p.essence - cost }));
+          setPlayer(p => p ? ({ ...p, essence: p.essence - cost }) : null);
           setCampState(prev => ({
               ...prev,
               upgrades: {
@@ -616,9 +790,10 @@ const App: React.FC = () => {
       } else {
           showToast("Not enough Arcane Essence!", "error");
       }
-  }, [player.essence, campState.upgrades, showToast]);
+  }, [player, campState.upgrades, showToast]);
 
   const handleBrewElixir = useCallback((elixir: Elixir) => {
+    if (!player) return;
     if (player.essence < elixir.cost) {
         showToast("Not enough Arcane Essence!", "error");
         return;
@@ -627,27 +802,108 @@ const App: React.FC = () => {
         showToast("You already have an active elixir.", "error");
         return;
     }
-    setPlayer(p => ({
-        ...p,
-        essence: p.essence - elixir.cost,
-        activeElixir: { id: elixir.id, ...elixir.effect }
-    }));
+    setPlayer(p => {
+        if (!p) return null;
+        return {
+            ...p,
+            essence: p.essence - elixir.cost,
+            activeElixir: { id: elixir.id, ...elixir.effect }
+        }
+    });
     showToast(`Brewed ${elixir.name}!`, 'success');
-  }, [player.essence, player.activeElixir, showToast]);
+  }, [player, showToast]);
 
   const handleExitCamp = useCallback((spentEssence: boolean) => {
+      if (!playerWithStats || !player) return;
       const healPercent = spentEssence ? 0.35 : 0.50;
       const healAmount = Math.floor(playerWithStats.maxHealth * healPercent);
       
-      setPlayer(p => ({
-          ...p,
-          health: Math.min(p.maxHealth, p.health + healAmount)
-      }));
+      setPlayer(p => {
+          if (!p) return null;
+          return {
+            ...p,
+            health: Math.min(p.maxHealth, p.health + healAmount)
+          }
+      });
       showToast(`Rested and healed for ${healAmount} HP!`, 'success');
 
-      generateAndSetJourney(victories, player.level);
+      generateAndSetJourney(victories, player.level, player.activeElixir);
       setGameState(GameStateEnum.JOURNEY);
-  }, [playerWithStats.maxHealth, player.level, victories, showToast, generateAndSetJourney]);
+  }, [playerWithStats, player, victories, showToast, generateAndSetJourney]);
+
+    const handleApplyEnchant = useCallback((slot: keyof Equipment, enchantToApply: Enchant) => {
+        if (!player) return;
+        const itemToEnchant = player.equipment[slot];
+        if (!itemToEnchant) return;
+
+        const cost = ENCHANT_COST_MODIFIERS[itemToEnchant.rarity];
+        if (player.essence < cost) {
+            showToast("Not enough Arcane Essence!", "error");
+            return;
+        }
+
+        let essenceChange = -cost;
+        if (itemToEnchant.enchant && itemToEnchant.enchant.rarity) {
+            const refund = Math.floor(RARITY_ESSENCE_MAP[itemToEnchant.enchant.rarity] * 0.5);
+            essenceChange += refund;
+            showToast(`Old enchant disenchanted for ${refund} essence.`, 'info');
+        }
+
+        setPlayer(p => {
+            if (!p) return null;
+            const newEquipment = { ...p.equipment };
+            const updatedItem = { ...itemToEnchant, enchant: enchantToApply };
+            newEquipment[slot] = updatedItem;
+
+            return {
+                ...p,
+                essence: p.essence + essenceChange,
+                enchants: p.enchants.filter(e => e.id !== enchantToApply.id),
+                equipment: newEquipment,
+            };
+        });
+
+        showToast(`Successfully enchanted ${itemToEnchant.name}!`, 'success');
+    }, [player, showToast]);
+
+    const handleSocketGem = useCallback((slot: keyof Equipment, socketIndex: number, gem: Gem) => {
+        if (!player) return;
+        const itemToSocket = player.equipment[slot];
+        if (!itemToSocket || !itemToSocket.sockets || !itemToSocket.sockets[socketIndex]) {
+            showToast("Invalid item or socket.", "error");
+            return;
+        }
+
+        const socket = itemToSocket.sockets[socketIndex];
+        if (socket.gem) {
+            showToast("Socket is already filled.", "error");
+            return;
+        }
+        if (socket.color !== gem.color) {
+            showToast("Gem color does not match socket color.", "error");
+            return;
+        }
+
+        setPlayer(p => {
+            if (!p) return null;
+            const newEquipment = { ...p.equipment };
+            const updatedItem = { ...itemToSocket };
+            const newSockets = [...updatedItem.sockets!];
+            newSockets[socketIndex] = { ...socket, gem: gem };
+            updatedItem.sockets = newSockets;
+            newEquipment[slot] = updatedItem;
+            
+            return {
+                ...p,
+                equipment: newEquipment,
+                gems: p.gems.filter(g => g.id !== gem.id),
+            }
+        });
+
+        showToast(`Socketed ${gem.name} into ${itemToSocket.name}!`, 'success');
+
+    }, [player, showToast]);
+
 
   const handleClaimReward = useCallback((achievementId: string, tierIndex: number) => {
     const achievementData = ACHIEVEMENTS_DATA.find(a => a.id === achievementId);
@@ -656,6 +912,7 @@ const App: React.FC = () => {
     const reward = achievementData.tiers[tierIndex].reward;
 
     setPlayer(prev => {
+        if (!prev) return null;
         let newPlayer = { ...prev };
         if (reward.type === 'xp') {
             let newXp = newPlayer.xp + reward.value;
@@ -663,17 +920,15 @@ const App: React.FC = () => {
             while (newXp >= newPlayer.xpToNextLevel) {
                 newPlayer.level += 1;
                 newXp -= newPlayer.xpToNextLevel;
-                newPlayer.xpToNextLevel = Math.floor(newPlayer.xpToNextLevel * 1.5);
-                newPlayer.maxHealth = Math.floor(newPlayer.maxHealth * 1.2);
-                newPlayer.health = newPlayer.maxHealth; // Full heal
-                addToHistory('level-up', `Reached Level ${newPlayer.level}!`);
+                newPlayer.xpToNextLevel = Math.floor(newPlayer.xpToNextLevel * 1.35);
+                newPlayer.maxHealth = Math.floor(newPlayer.maxHealth * 1.15);
+                newPlayer.health = newPlayer.maxHealth; // Full heal on level up
                 showToast(`Level up! You are now level ${newPlayer.level}!`, 'success');
+                addToHistory('level-up', `Reached Level ${newPlayer.level}!`);
             }
             newPlayer.xp = newXp;
-            showToast(`Gained ${reward.value} XP!`, 'info');
         } else if (reward.type === 'essence') {
             newPlayer.essence += reward.value;
-            showToast(`Gained ${reward.value} Arcane Essence!`, 'success');
         }
         return newPlayer;
     });
@@ -683,200 +938,253 @@ const App: React.FC = () => {
         newAchievements[achievementId].claimedTier = tierIndex;
         return newAchievements;
     });
+
+    showToast(`Claimed ${reward.value} ${reward.type}!`, 'success');
   }, [showToast, addToHistory]);
 
-    const handleClaimAllRewards = useCallback(() => {
-        let totalXpGained = 0;
-        let totalEssenceGained = 0;
-        const newAchievements = JSON.parse(JSON.stringify(playerAchievements));
-        let rewardsClaimed = false;
+  const handleClaimAllRewards = useCallback(() => {
+    let totalXp = 0;
+    let totalEssence = 0;
+    const newAchievements = JSON.parse(JSON.stringify(playerAchievements)); // Deep copy
 
-        for (const ach of ACHIEVEMENTS_DATA) {
-            const progress = newAchievements[ach.id];
-            if (progress.unlockedTier > progress.claimedTier) {
-                rewardsClaimed = true;
-                for (let i = progress.claimedTier + 1; i <= progress.unlockedTier; i++) {
-                    const reward = ach.tiers[i].reward;
-                    if (reward.type === 'xp') {
-                        totalXpGained += reward.value;
-                    } else if (reward.type === 'essence') {
-                        totalEssenceGained += reward.value;
-                    }
-                }
-                progress.claimedTier = progress.unlockedTier;
-            }
+    for (const achievement of ACHIEVEMENTS_DATA) {
+      const progress = newAchievements[achievement.id];
+      if (progress.unlockedTier > progress.claimedTier) {
+        for (let i = progress.claimedTier + 1; i <= progress.unlockedTier; i++) {
+          const reward = achievement.tiers[i].reward;
+          if (reward.type === 'xp') {
+            totalXp += reward.value;
+          } else {
+            totalEssence += reward.value;
+          }
         }
-        
-        if (rewardsClaimed) {
-            setPlayer(prev => {
-                let newPlayer = { ...prev };
-                newPlayer.essence += totalEssenceGained;
-
-                if (totalXpGained > 0) {
-                    let newXp = newPlayer.xp + totalXpGained;
-                    while (newXp >= newPlayer.xpToNextLevel) {
-                        newPlayer.level += 1;
-                        newXp -= newPlayer.xpToNextLevel;
-                        newPlayer.xpToNextLevel = Math.floor(newPlayer.xpToNextLevel * 1.5);
-                        newPlayer.maxHealth = Math.floor(newPlayer.maxHealth * 1.2);
-                        newPlayer.health = newPlayer.maxHealth;
-                        addToHistory('level-up', `Reached Level ${newPlayer.level}!`);
-                        showToast(`Level up! You are now level ${newPlayer.level}!`, 'success');
-                    }
-                    newPlayer.xp = newXp;
-                }
-                return newPlayer;
-            });
-
-            setPlayerAchievements(newAchievements);
-            const xpMessage = totalXpGained > 0 ? `${totalXpGained} XP` : '';
-            const essenceMessage = totalEssenceGained > 0 ? `${totalEssenceGained} Essence` : '';
-            const separator = xpMessage && essenceMessage ? ' and ' : '';
-            showToast(`Claimed ${xpMessage}${separator}${essenceMessage}!`, 'success');
-        }
-    }, [playerAchievements, showToast, addToHistory]);
-
-  useEffect(() => {
-    if (journeyPath.length === 0) {
-      generateAndSetJourney(victories, player.level);
+        progress.claimedTier = progress.unlockedTier;
+      }
     }
-  }, [journeyPath.length, victories, player.level, generateAndSetJourney]);
 
-  useEffect(() => {
-    const handleAsyncState = async () => {
-        if (gameState === GameStateEnum.GENERATING_ENEMY) {
-            try {
-                const enemyData = await service.generateEnemy(victories, playerWithStats.level, justReceivedTreasure);
-                const enemyImage = USE_AI ? await service.generateEnemyImage(enemyData.description) : null;
-                setEnemy({ ...enemyData, health: enemyData.maxHealth, imageBase64: enemyImage || '' });
-                setCombatLog([]);
-                setPlayerStatusEffects([]);
-                setEnemyStatusEffects([]);
-                setGameState(GameStateEnum.COMBAT);
-                setJustReceivedTreasure(false);
-            } catch (error) {
-                console.error("Failed to generate enemy:", error);
-                showToast("Enemy generation failed. Trying again.", "error");
-                setGameState(GameStateEnum.JOURNEY);
-            }
+    if (totalXp > 0 || totalEssence > 0) {
+      setPlayer(prev => {
+        if (!prev) return null;
+        let newPlayer = { ...prev };
+        newPlayer.essence += totalEssence;
+
+        let newXp = newPlayer.xp + totalXp;
+        while (newXp >= newPlayer.xpToNextLevel) {
+            newPlayer.level += 1;
+            newXp -= newPlayer.xpToNextLevel;
+            newPlayer.xpToNextLevel = Math.floor(newPlayer.xpToNextLevel * 1.35);
+            newPlayer.maxHealth = Math.floor(newPlayer.maxHealth * 1.15);
+            newPlayer.health = newPlayer.maxHealth;
+            showToast(`Level up! You are now level ${newPlayer.level}!`, 'success');
+            addToHistory('level-up', `Reached Level ${newPlayer.level}!`);
         }
-        if (gameState === GameStateEnum.GENERATING_EVENT && journeyEvent) {
-             try {
-                const eventData = await service.generateJourneyEvent(playerWithStats.level, victories, journeyEvent.type);
+        newPlayer.xp = newXp;
+        return newPlayer;
+      });
 
-                if (eventData.type === 'merchant') {
-                    setJourneyEvent(eventData);
-                    setGameState(GameStateEnum.MERCHANT);
-                } else if (eventData.type === 'dilemma') {
-                    setJourneyEvent(eventData);
-                    setRunStats(prev => ({...prev, dilemmasFaced: prev.dilemmasFaced + 1}));
-                    setGameState(GameStateEnum.DILEMMA);
-                } else if (eventData.type === 'echoing_cairn') {
-                    const significantHistory = runHistory.filter(h => ['victory', 'level-up', 'item-forged'].includes(h.type)).slice(-5);
-                    const choices: EchoingCairnChoice[] = [];
-                    const shuffledHistory = [...significantHistory].sort(() => 0.5 - Math.random());
-                    
-                    for (const entry of shuffledHistory) {
-                        if (choices.length >= 3) break;
-                        let buff: TemporaryBuff | null = null;
-                        switch (entry.type) {
-                            case 'victory':
-                                buff = { source: 'Echoing Cairn', stat: 'attack', value: 5, duration: 2 };
-                                break;
-                            case 'level-up':
-                                buff = { source: 'Echoing Cairn', stat: 'critChance', value: 5, duration: 2 };
-                                break;
-                            case 'item-forged':
-                                buff = { source: 'Echoing Cairn', stat: 'defense', value: 5, duration: 2 };
-                                break;
-                        }
-                        if (buff && !choices.some(c => c.buff.stat === buff!.stat)) { // Avoid duplicate buff types
-                            choices.push({ historyEntry: entry, buff });
-                        }
-                    }
-                    
-                    if (choices.length > 0) {
-                        eventData.choices = choices;
-                        setJourneyEvent(eventData);
-                        setGameState(GameStateEnum.ECHOING_CAIRN);
-                    } else {
-                        eventData.type = 'discovery';
-                        eventData.narrative = "You find an ancient, weathered stone. It seems dormant for now.";
-                        eventData.outcome = { xpGained: 50, healthChange: 0, itemDropped: null };
-                        addToHistory('event-discovery', eventData.narrative);
-                        setJourneyEvent(eventData);
-                        setGameState(GameStateEnum.JOURNEY_EVENT);
-                    }
-                } else {
-                    setJourneyEvent(eventData);
-                    addToHistory(`event-${eventData.type}` as RunHistoryEntryType, eventData.narrative);
-                    setGameState(GameStateEnum.JOURNEY_EVENT);
+      setPlayerAchievements(newAchievements);
+      showToast(`Claimed all rewards! +${totalXp} XP, +${totalEssence} Essence.`, 'success');
+    }
+  }, [playerAchievements, showToast, addToHistory]);
+
+  const handleLootContinue = useCallback(() => {
+    if (!player || player.health <= 0) {
+        startNewRun();
+        return;
+    }
+
+    const forgedItem = lastCombatResult.itemDropped;
+    if (forgedItem && ritualSource === 'combat') {
+        setRitualSource(null);
+        const equippedItem = player.equipment[forgedItem.type];
+        if (equippedItem) {
+            setGearForChoice({ equipped: equippedItem, new: forgedItem });
+            setGameState(GameStateEnum.GEAR_CHOICE);
+            return;
+        } else {
+            setPlayer(prev => {
+                if (!prev) return null;
+                return { ...prev, equipment: { ...prev.equipment, [forgedItem.type]: forgedItem }};
+            });
+            showToast(`Equipped ${forgedItem.name}!`, 'success');
+        }
+    }
+    
+    const currentPos = journeyPath[journeyPath.length - 1];
+    if (currentPos && currentPos.x >= GRID_WIDTH - 1) {
+        generateAndSetJourney(victories, player.level, player.activeElixir);
+        setGameState(GameStateEnum.JOURNEY);
+        return;
+    }
+
+    if (victories > 0 && victories % 5 === 0) {
+        setGameState(GameStateEnum.CAMP);
+    } else {
+        setIsJourneyPaused(false);
+        setGameState(GameStateEnum.JOURNEY);
+    }
+}, [player, startNewRun, lastCombatResult, ritualSource, journeyPath, victories, generateAndSetJourney, showToast]);
+
+
+  const handleJourneyEventContinue = useCallback(() => {
+      if (journeyEvent?.outcome) {
+          handleEventOutcome(journeyEvent.outcome);
+          if (journeyEvent.outcome.itemDropped) {
+              setGameState(GameStateEnum.DECK_OF_WHISPERS);
+          } else {
+              setIsJourneyPaused(false);
+              setGameState(GameStateEnum.JOURNEY);
+          }
+      } else {
+          setIsJourneyPaused(false);
+          setGameState(GameStateEnum.JOURNEY);
+      }
+  }, [journeyEvent, handleEventOutcome]);
+
+  const handleDilemmaResultContinue = useCallback(() => {
+      if (dilemmaResult) {
+          handleEventOutcome(dilemmaResult.outcome);
+          if (dilemmaResult.outcome.itemDropped) {
+              setGameState(GameStateEnum.DECK_OF_WHISPERS);
+          } else {
+              setIsJourneyPaused(false);
+              setGameState(GameStateEnum.JOURNEY);
+          }
+      } else {
+           setIsJourneyPaused(false);
+           setGameState(GameStateEnum.JOURNEY);
+      }
+  }, [dilemmaResult, handleEventOutcome]);
+
+    useEffect(() => {
+        if (gameState === GameStateEnum.GENERATING_ENEMY && player) {
+            const generate = async () => {
+                try {
+                    const enemyData = await service.generateEnemy(victories, player.level, justReceivedTreasure);
+                    const enemyImage = await service.generateEnemyImage(enemyData.description, enemyData.name);
+                    setJustReceivedTreasure(false); // Reset flag after using it
+                    setEnemy({
+                        ...enemyData,
+                        health: enemyData.maxHealth,
+                        imageBase64: enemyImage,
+                    });
+                    setCombatLog([]);
+                    setPlayerStatusEffects([]);
+                    setEnemyStatusEffects([]);
+                    setGameState(GameStateEnum.COMBAT);
+                } catch (error) {
+                    console.error("Failed to generate enemy:", error);
+                    showToast("Failed to generate an enemy. The path seems clear for now.", "error");
+                    setIsJourneyPaused(false);
+                    setGameState(GameStateEnum.JOURNEY);
                 }
-             } catch (error) {
-                console.error("Failed to generate event:", error);
-                showToast("Event generation failed. Continuing journey.", "error");
-                setIsJourneyPaused(false);
-                setGameState(GameStateEnum.JOURNEY);
-             }
+            };
+            generate();
         }
-    };
-    handleAsyncState();
-  }, [gameState, victories, playerWithStats.level, justReceivedTreasure, journeyEvent, addToHistory, showToast, runHistory]);
+    }, [gameState, victories, player, justReceivedTreasure, showToast]);
+
+    useEffect(() => {
+        if (gameState === GameStateEnum.GENERATING_EVENT && journeyEvent && player) {
+            const generate = async () => {
+                try {
+                    const fullEvent = await service.generateJourneyEvent(player.level, victories, journeyEvent.type);
+                    
+                    if (fullEvent.type === 'echoing_cairn') {
+                        const memorableHistory = runHistory.filter(h => h.type === 'victory' || h.type === 'item-forged' || h.type === 'level-up').slice(-3);
+                        if (memorableHistory.length > 0) {
+                            const choices: EchoingCairnChoice[] = memorableHistory.map((h, i) => {
+                                let buff: TemporaryBuff;
+                                const buffValue = 2 + Math.floor(player.level / 2);
+                                if (i === 0) {
+                                    buff = { source: 'Echoing Cairn', stat: 'attack', value: buffValue, duration: 3 };
+                                } else if (i === 1) {
+                                    buff = { source: 'Echoing Cairn', stat: 'defense', value: buffValue, duration: 3 };
+                                } else {
+                                    buff = { source: 'Echoing Cairn', stat: 'critChance', value: 5, duration: 3 };
+                                }
+                                return { historyEntry: h, buff };
+                            });
+                            fullEvent.choices = choices;
+                        }
+                    }
+                    
+                    setJourneyEvent(fullEvent);
+
+                    switch (fullEvent.type) {
+                        case 'merchant':
+                            setGameState(GameStateEnum.MERCHANT);
+                            break;
+                        case 'dilemma':
+                             setRunStats(prev => ({...prev, dilemmasFaced: prev.dilemmasFaced + 1}));
+                            setGameState(GameStateEnum.DILEMMA);
+                            break;
+                        case 'echoing_cairn':
+                            if (fullEvent.choices && fullEvent.choices.length > 0) {
+                                setGameState(GameStateEnum.ECHOING_CAIRN);
+                            } else {
+                                setJourneyEvent({
+                                    type: 'discovery',
+                                    narrative: 'The cairn remains silent, offering no echoes of your past. You feel a brief moment of peace before moving on.',
+                                    outcome: { xpGained: 25, healthChange: 0, itemDropped: null }
+                                });
+                                setGameState(GameStateEnum.JOURNEY_EVENT);
+                            }
+                            break;
+                        default:
+                            setGameState(GameStateEnum.JOURNEY_EVENT);
+                            break;
+                    }
+                } catch (error) {
+                    console.error("Failed to generate journey event:", error);
+                    showToast("The path ahead is unclear. Continuing your journey.", "error");
+                    setIsJourneyPaused(false);
+                    setGameState(GameStateEnum.JOURNEY);
+                }
+            };
+            generate();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [gameState, journeyEvent?.type, player]);
 
   const renderGameState = () => {
+    if (isLoading) {
+        return <LoadingPhase message={loadingMessage ?? undefined} />;
+    }
+    
+    if (!playerWithStats && gameState !== GameStateEnum.CHARACTER_SELECT) {
+        return <LoadingPhase />;
+    }
+
     switch (gameState) {
+      case GameStateEnum.CHARACTER_SELECT:
+        return <CharacterSelectionPhase onSelect={handleCharacterSelect} />;
       case GameStateEnum.JOURNEY:
-        return <JourneyPhase
-                  player={playerWithStats}
-                  narrative={journeyNarrative}
-                  mapImageUrl={mapImageUrl}
-                  victories={victories}
-                  path={journeyPath}
-                  nodes={nodes}
-                  isPaused={isJourneyPaused}
-                  onNextStep={handleNextJourneyStep}
-                  onSetMouseInfluence={setMouseInfluence}
-               />;
+        return (
+          <JourneyPhase
+            player={playerWithStats!}
+            narrative={journeyNarrative}
+            mapImageUrl={mapImageUrl}
+            victories={victories}
+            path={journeyPath}
+            nodes={nodes}
+            isPaused={isJourneyPaused}
+            onNextStep={handleNextJourneyStep}
+            onSetMouseInfluence={setMouseInfluence}
+          />
+        );
       case GameStateEnum.GENERATING_ENEMY:
       case GameStateEnum.GENERATING_EVENT:
         return <LoadingPhase />;
-      case GameStateEnum.JOURNEY_EVENT:
-        return journeyEvent && journeyEvent.outcome ? <JourneyEventPhase event={journeyEvent} onContinue={() => {
-            handleEventOutcome(journeyEvent.outcome!);
-            setGameState(GameStateEnum.JOURNEY);
-        }} /> : <LoadingPhase />;
-      case GameStateEnum.DILEMMA:
-          return journeyEvent ? <DilemmaPhase event={journeyEvent} onResolve={handleDilemmaResolve} /> : <LoadingPhase />;
-      case GameStateEnum.DILEMMA_RESULT:
-          return dilemmaResult ? <DilemmaResultPhase result={dilemmaResult} onContinue={() => {
-              setDilemmaResult(null);
-              setIsJourneyPaused(false);
-              setGameState(GameStateEnum.JOURNEY);
-          }} /> : <LoadingPhase />;
-      case GameStateEnum.ECHOING_CAIRN:
-          return journeyEvent ? <EchoingCairnPhase event={journeyEvent} onResolve={handleEchoingCairnResolve} /> : <LoadingPhase />;
-      case GameStateEnum.MERCHANT:
-          return journeyEvent ? <MerchantPhase
-            player={playerWithStats}
-            event={journeyEvent}
-            onPurchase={handlePurchase}
-            onExit={() => { setIsJourneyPaused(false); setGameState(GameStateEnum.JOURNEY); }}
-          /> : <LoadingPhase />;
-      case GameStateEnum.CAMP:
-        return <CampPhase
-            player={playerWithStats}
-            campState={campState}
-            onPurchaseUpgrade={handlePurchaseUpgrade}
-            onBrewElixir={handleBrewElixir}
-            onExit={handleExitCamp}
-        />;
       case GameStateEnum.COMBAT:
-        return enemy ? (
+        if (!enemy) return <LoadingPhase />;
+        const setPlayerHealth = (hp: number) => setPlayer(p => p ? ({ ...p, health: hp }) : null);
+        const setEnemyHealth = (hp: number) => setEnemy(e => e ? { ...e, health: hp } : null);
+        return (
           <AutomatedCombatPhase
-            player={playerWithStats}
-            enemy={enemy}
-            setPlayerHealth={(hp) => setPlayer(p => ({ ...p, health: hp }))}
-            setEnemyHealth={(hp) => setEnemy(e => e ? { ...e, health: hp } : null)}
+            player={playerWithStats!}
+            enemy={{...enemy, activeStatusEffects: enemyStatusEffects}}
+            setPlayerHealth={setPlayerHealth}
+            setEnemyHealth={setEnemyHealth}
             setPlayerStatusEffects={setPlayerStatusEffects}
             setEnemyStatusEffects={setEnemyStatusEffects}
             onCombatEnd={handleCombatEnd}
@@ -889,78 +1197,168 @@ const App: React.FC = () => {
             isCombatSpeedLocked={isCombatSpeedLocked}
             setIsCombatSpeedLocked={setIsCombatSpeedLocked}
           />
-        ) : <LoadingPhase />;
-      case GameStateEnum.DECK_OF_WHISPERS:
-        return itemForRitual ? <DeckOfWhispersPhase item={itemForRitual} onComplete={handleRitualComplete} /> : <LoadingPhase />;
-      case GameStateEnum.GEAR_CHOICE:
-        return gearForChoice ? <GearChoicePhase equippedItem={gearForChoice.equipped} newItem={gearForChoice.new} onChoice={handleGearChoice} autoEquip={autoEquip} setAutoEquip={setAutoEquip} /> : <LoadingPhase />;
+        );
       case GameStateEnum.LOOT:
-        return <LootPhase
-                  result={lastCombatResult}
-                  onContinue={() => {
-                      if (lastCombatResult.playerWon) {
-                          if (itemForRitual) {
-                            setGameState(GameStateEnum.DECK_OF_WHISPERS);
-                          } else {
-                            const shouldGoToCamp = (victories > 0 && victories % 3 === 0);
-                            if (shouldGoToCamp) {
-                                setGameState(GameStateEnum.CAMP);
-                            } else {
-                                generateAndSetJourney(victories, player.level);
-                                setGameState(GameStateEnum.JOURNEY);
-                            }
-                          }
-                      } else {
-                          startNewRun();
-                      }
-                  }}
-                  enemyName={enemy?.name || 'a foul beast'}
-               />;
+        return (
+          <LootPhase
+            result={lastCombatResult}
+            onContinue={handleLootContinue}
+            enemyName={enemy?.name || 'a fallen foe'}
+          />
+        );
+      case GameStateEnum.DECK_OF_WHISPERS:
+        if (!itemForRitual) return <LoadingPhase />;
+        return (
+          <DeckOfWhispersPhase
+            item={itemForRitual}
+            onComplete={handleRitualComplete}
+          />
+        );
+      case GameStateEnum.ARTIFACT_REVEAL:
+        if (!revealedArtifact) return <LoadingPhase />;
+        return (
+            <ArtifactRevealPhase
+                item={revealedArtifact}
+                onContinue={handleArtifactRevealContinue}
+            />
+        );
+      case GameStateEnum.GEAR_CHOICE:
+        if (!gearForChoice) return <LoadingPhase />;
+        return (
+          <GearChoicePhase
+            equippedItem={gearForChoice.equipped}
+            newItem={gearForChoice.new}
+            onChoice={handleGearChoice}
+            autoEquip={autoEquip}
+            setAutoEquip={setAutoEquip}
+          />
+        );
+      case GameStateEnum.JOURNEY_EVENT:
+        if (!journeyEvent || !journeyEvent.outcome) return <LoadingPhase />;
+        return (
+          <JourneyEventPhase
+            event={journeyEvent}
+            onContinue={handleJourneyEventContinue}
+          />
+        );
+      case GameStateEnum.MERCHANT:
+        if (!journeyEvent) return <LoadingPhase />;
+        return (
+          <MerchantPhase
+            player={playerWithStats!}
+            event={journeyEvent}
+            onPurchase={handlePurchase}
+            onExit={() => {
+              updateBuffs();
+              setIsJourneyPaused(false);
+              setGameState(GameStateEnum.JOURNEY);
+            }}
+          />
+        );
+      case GameStateEnum.DILEMMA:
+        if (!journeyEvent) return <LoadingPhase />;
+        return (
+          <DilemmaPhase
+            event={journeyEvent}
+            onResolve={handleDilemmaResolve}
+          />
+        );
+      case GameStateEnum.DILEMMA_RESULT:
+        if (!dilemmaResult) return <LoadingPhase />;
+        return (
+          <DilemmaResultPhase
+            result={dilemmaResult}
+            onContinue={handleDilemmaResultContinue}
+          />
+        );
+      case GameStateEnum.ECHOING_CAIRN:
+        if (!journeyEvent) return <LoadingPhase />;
+        return (
+          <EchoingCairnPhase
+            event={journeyEvent}
+            onResolve={handleEchoingCairnResolve}
+          />
+        );
+      case GameStateEnum.CAMP:
+        return (
+          <CampPhase
+            player={playerWithStats!}
+            campState={campState}
+            onPurchaseUpgrade={handlePurchaseUpgrade}
+            onBrewElixir={handleBrewElixir}
+            onExit={handleExitCamp}
+            onEnterEnchanting={() => setGameState(GameStateEnum.ENCHANTING)}
+            onEnterGemSocketing={() => setGameState(GameStateEnum.GEM_SOCKETING)}
+          />
+        );
+      case GameStateEnum.ENCHANTING:
+        return (
+            <EnchantingPhase
+                player={playerWithStats!}
+                onApplyEnchant={handleApplyEnchant}
+                onExit={() => setGameState(GameStateEnum.CAMP)}
+            />
+        );
+      case GameStateEnum.GEM_SOCKETING:
+        return (
+            <GemSocketingPhase
+                player={playerWithStats!}
+                onSocketGem={handleSocketGem}
+                onExit={() => setGameState(GameStateEnum.CAMP)}
+            />
+        );
       default:
         return <div>Unknown game state</div>;
     }
   };
 
   return (
-    <div className="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4 md:p-6 font-sans">
-      <main className={`w-full ${containerMaxWidthClass} bg-black/20 rounded-xl shadow-2xl shadow-purple-900/20 border border-purple-800/20 p-6 relative mt-16 transition-all duration-500`}>
-         <header className="absolute -top-24 left-1/2 -translate-x-1/2 w-full max-w-lg flex items-center justify-center pointer-events-none z-10">
-            <div className="flex-1"></div>
-            <img
-                src="https://astriloot.com/assets/astriloot-name.png"
-                alt="Astriloot"
-                className={`w-full max-w-md h-auto transition-all duration-1000 ${headerGlowClass}`}
-            />
-             <div className="flex-1 flex justify-start pointer-events-auto">
-                 <button onClick={() => setIsAchievementsVisible(true)} className="p-2 text-gray-400 hover:text-yellow-300 transition-colors ml-4" title="Achievements">
-                    <div className={`relative ${hasUnclaimedRewards ? 'animate-pulse-glow-gold' : ''}`}>
-                        <Trophy className="w-8 h-8" />
-                        {hasUnclaimedRewards && <div className="absolute -top-1 -right-1 w-3 h-3 bg-yellow-400 rounded-full border-2 border-gray-900" />}
-                    </div>
-                </button>
-             </div>
-         </header>
+    <main className="bg-gray-900 text-white min-h-screen font-sans antialiased bg-grid-purple-500/10">
+      <div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-purple-950/50 via-gray-900 to-black"></div>
+      
+      <header className={`sticky top-0 z-40 bg-black/30 backdrop-blur-md border-b border-purple-800/50 py-3 transition-colors duration-500 ${headerGlowClass}`}>
+        <div className="container mx-auto flex justify-between items-center px-4 md:px-6">
+          <div className="flex items-end gap-4">
+            <img src="https://astriloot.com/assets/astriloot-name.png" alt="Astriloot" className="h-10 md:h-12" />
+            <span className="text-xl md:text-2xl font-cinzel tracking-wider text-gray-400 pb-1">
+              {player ? `${player.name}'s Journey` : 'A New Beginning'}
+            </span>
+          </div>
+          <div className="relative">
+            <button
+              onClick={() => setIsAchievementsVisible(true)}
+              className="p-2 text-gray-300 hover:text-yellow-300 transition-colors relative"
+              aria-label="View Achievements"
+            >
+              <Trophy className="w-8 h-8" />
+              {hasUnclaimedRewards && <span className="absolute top-0 right-0 w-3 h-3 bg-yellow-400 rounded-full animate-pulse"></span>}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className={`container mx-auto p-4 md:p-6 transition-all duration-500 ${containerMaxWidthClass}`}>
         {renderGameState()}
-        {isAchievementsVisible && (
-          <AchievementsPhase
-            playerAchievements={playerAchievements}
-            onClaimReward={handleClaimReward}
-            onClaimAllRewards={handleClaimAllRewards}
-            hasUnclaimedRewards={hasUnclaimedRewards}
-            onExit={() => setIsAchievementsVisible(false)}
-          />
-        )}
-        {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
-        {achievementToastQueue.length > 0 && (
-          <Toast
-              key={achievementToastQueue[0].id}
-              message={`Unlocked: ${achievementToastQueue[0].name}`}
-              type="achievement"
-              onClose={() => setAchievementToastQueue(q => q.slice(1))}
-          />
-        )}
-      </main>
-    </div>
+      </div>
+
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
+
+      {isAchievementsVisible && (
+        <AchievementsPhase
+          playerAchievements={playerAchievements}
+          onClaimReward={handleClaimReward}
+          onClaimAllRewards={handleClaimAllRewards}
+          hasUnclaimedRewards={hasUnclaimedRewards}
+          onExit={() => setIsAchievementsVisible(false)}
+        />
+      )}
+    </main>
   );
 };
 
