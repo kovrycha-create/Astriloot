@@ -1,17 +1,19 @@
+
 import { DECK_OF_WHISPERS_CARDS } from '../constants';
 import type { Card, YlemModifier, Rarity, RitualGenerator } from '../types';
+import type { SeedableRNG } from '../App';
 
-function shuffle(array: Card[]): Card[] {
+function shuffle(array: Card[], rng: SeedableRNG): Card[] {
   const newArray = [...array];
   for (let i = newArray.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rng.next() * (i + 1));
     [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
   }
   return newArray;
 }
 
-export function* runRitualSimulation(): RitualGenerator {
-  let deck = shuffle([...DECK_OF_WHISPERS_CARDS]);
+export function* runRitualSimulation(rng: SeedableRNG): RitualGenerator {
+  let deck = shuffle([...DECK_OF_WHISPERS_CARDS], rng);
   yield { type: 'START', deckSize: deck.length };
 
   let drawnCards: Card[] = [];
@@ -89,7 +91,7 @@ export function* runRitualSimulation(): RitualGenerator {
         if (fluonsDrawn === 1) {
           activeModifier = card.modifier || null;
           isReshuffled = true;
-          deck = shuffle(deck);
+          deck = shuffle(deck, rng);
           yield { type: 'MODIFIER', modifier: activeModifier, card: card };
           yield { type: 'RESHUFFLE', deckSize: deck.length };
         } else { // Second Fluon drawn

@@ -1,12 +1,16 @@
+
+
 import React, { useState, useEffect, useRef } from 'react';
 import type { Item, Rarity, RitualStep, Card, YlemModifier, CardType } from '../types';
 import { runRitualSimulation } from '../utils/deckOfWhispers';
 import { RARITY_COLORS, DECK_OF_WHISPERS_CARDS } from '../constants';
 import { HelpCircle, Gem, Waves, Biohazard, Zap, Atom, Sparkles, Eye, CircleDashed } from 'lucide-react';
+import type { SeedableRNG } from '../App';
 
 interface DeckOfWhispersPhaseProps {
   item: Omit<Item, 'rarity'>;
   onComplete: (baseItem: Omit<Item, 'rarity'>, rarity: Rarity) => void;
+  rng: SeedableRNG;
 }
 
 // --- Sub-components for visual representation ---
@@ -211,7 +215,7 @@ const AdvancedRules = () => (
 );
 
 
-const DeckOfWhispersPhase: React.FC<DeckOfWhispersPhaseProps> = ({ item, onComplete }) => {
+const DeckOfWhispersPhase: React.FC<DeckOfWhispersPhaseProps> = ({ item, onComplete, rng }) => {
     const [ritualLog, setRitualLog] = useState<string[]>([]);
     const [drawnCard, setDrawnCard] = useState<Card | null>(null);
     const [isHelpVisible, setIsHelpVisible] = useState(false);
@@ -223,9 +227,9 @@ const DeckOfWhispersPhase: React.FC<DeckOfWhispersPhaseProps> = ({ item, onCompl
     const [modifierCard, setModifierCard] = useState<Card | null>(null);
     const [isReshuffling, setIsReshuffling] = useState(false);
     
-    const simulationRef = useRef(runRitualSimulation());
-    const logContainerRef = useRef<HTMLDivElement>(null);
+    const simulationRef = useRef(runRitualSimulation(rng));
     const timerRef = useRef<number | null>(null);
+    const logContainerRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
         if (logContainerRef.current) {

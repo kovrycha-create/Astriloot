@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect } from 'react';
 import type { Player, JourneyEvent, ShopItem } from '../types';
 import PlayerStats from './PlayerStats';
@@ -10,6 +11,7 @@ interface MerchantPhaseProps {
   event: JourneyEvent;
   onPurchase: (item: ShopItem) => void;
   onExit: () => void;
+  onCurrencyExchange: (from: 'vas' | 'ae', to: 'vas' | 'ae', amount: number, rate: number) => void;
 }
 
 const ShopItemCard: React.FC<{

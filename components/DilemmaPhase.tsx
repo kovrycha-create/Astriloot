@@ -1,13 +1,16 @@
+
 import React, { useEffect, useState, useRef } from 'react';
 import type { JourneyEvent, DilemmaChoice } from '../types';
 import { GitBranch, Clock } from 'lucide-react';
+import type { SeedableRNG } from '../App';
 
 interface DilemmaPhaseProps {
   event: JourneyEvent;
   onResolve: (choice: DilemmaChoice) => void;
+  rng: SeedableRNG;
 }
 
-const DilemmaPhase: React.FC<DilemmaPhaseProps> = ({ event, onResolve }) => {
+const DilemmaPhase: React.FC<DilemmaPhaseProps> = ({ event, onResolve, rng }) => {
   const { narrative } = event;
   // When in DilemmaPhase, the event choices are guaranteed to be of type DilemmaChoice.
   const choices = (event.choices || []) as DilemmaChoice[];
@@ -24,8 +27,9 @@ const DilemmaPhase: React.FC<DilemmaPhaseProps> = ({ event, onResolve }) => {
         const newTime = prev - 50;
         if (newTime <= 0) {
           if (timerRef.current) clearInterval(timerRef.current);
-          // Auto-resolve with a random choice
-          const randomChoice = choices[Math.floor(Math.random() * choices.length)];
+          // Auto-resolve with a deterministic choice
+          const randomIndex = Math.floor(rng.next() * choices.length);
+          const randomChoice = choices[randomIndex];
           onResolve(randomChoice);
           return 0;
         }
@@ -36,7 +40,7 @@ const DilemmaPhase: React.FC<DilemmaPhaseProps> = ({ event, onResolve }) => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [choices, onResolve]);
+  }, [choices, onResolve, rng]);
 
   const handleChoice = (choice: DilemmaChoice) => {
     if (timerRef.current) clearInterval(timerRef.current);

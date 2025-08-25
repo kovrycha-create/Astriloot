@@ -1,18 +1,20 @@
+
 import type { PathNode, JourneyNode, JourneyEventType } from '../types';
+import type { SeedableRNG } from '../App';
 
 export const GRID_WIDTH = 20;
 export const GRID_HEIGHT = 12;
 
-export const generateNodes = (forceFirstNodePositive: boolean = false): JourneyNode[] => {
+export const generateNodes = (rng: SeedableRNG, forceFirstNodePositive: boolean = false): JourneyNode[] => {
     const nodes: JourneyNode[] = [];
     const nodeTypes: JourneyEventType[] = ['treasure', 'shrine', 'trap', 'discovery', 'merchant', 'dilemma', 'echoing_cairn'];
-    let numberOfNodes = Math.floor(Math.random() * 4) + 3; // 3 to 6 nodes
+    let numberOfNodes = rng.nextInt(3, 6); // 3 to 6 nodes
     const occupiedCoords = new Set<string>();
 
     if (forceFirstNodePositive) {
-        const type = Math.random() > 0.5 ? 'treasure' : 'shrine';
+        const type = rng.next() > 0.5 ? 'treasure' : 'shrine';
         const x = 3;
-        const y = Math.floor(Math.random() * GRID_HEIGHT);
+        const y = rng.nextInt(0, GRID_HEIGHT - 1);
         const coordKey = `${x},${y}`;
         occupiedCoords.add(coordKey);
         nodes.push({ id: `${x}-${y}-forced`, x, y, type });
@@ -24,19 +26,19 @@ export const generateNodes = (forceFirstNodePositive: boolean = false): JourneyN
         let coordKey;
         // Avoid placing nodes in the first 3 and last 3 columns, and don't overlap
         do {
-            x = Math.floor(Math.random() * (GRID_WIDTH - 6)) + 3;
-            y = Math.floor(Math.random() * GRID_HEIGHT);
+            x = rng.nextInt(3, GRID_WIDTH - 4);
+            y = rng.nextInt(0, GRID_HEIGHT - 1);
             coordKey = `${x},${y}`;
         } while (occupiedCoords.has(coordKey));
 
         occupiedCoords.add(coordKey);
-        const type = nodeTypes[Math.floor(Math.random() * nodeTypes.length)];
+        const type = nodeTypes[rng.nextInt(0, nodeTypes.length - 1)];
         nodes.push({ id: `${x}-${y}-${i}`, x, y, type });
     }
     return nodes;
 };
 
-export const calculateNextStep = (currentPos: PathNode, influence: 'up' | 'down' | null): PathNode => {
+export const calculateNextStep = (rng: SeedableRNG, currentPos: PathNode, influence: 'up' | 'down' | null): PathNode => {
     const moves = [
         { x: 1, y: 0, weight: 5 },  // Right
         { x: 1, y: -1, weight: 2 }, // Up-Right
@@ -70,7 +72,7 @@ export const calculateNextStep = (currentPos: PathNode, influence: 'up' | 'down'
     });
 
     const totalWeight = validMoves.reduce((sum, move) => sum + move.weight, 0);
-    let random = Math.random() * totalWeight;
+    let random = rng.next() * totalWeight;
 
     for (const move of validMoves) {
         random -= move.weight;

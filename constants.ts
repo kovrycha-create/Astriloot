@@ -1,14 +1,4 @@
 
-
-
-
-
-
-
-
-
-
-
 import type { Player, Card, Rarity, CampState, Achievement, PlayerAchievements, Elixir, Enchant, Gem, GemColor, GemQuality, GemEffect, SocketColor, CharacterData } from './types';
 
 const YMZO_INITIAL_STATE: Player = {
@@ -153,6 +143,25 @@ export const UPGRADE_DESCRIPTIONS = {
         "The workshop is perfected. All crafting is improved.",
     ],
 };
+
+// --- Economy ---
+export const ECONOMY_TUNING = {
+  "currencies": {
+    "vas": { "id": "vas", "name": "Vas", "rarity": "common" },
+    "ae": { "id": "ae", "name": "Arcane Essence", "rarity": "rare" }
+  },
+  "conversion": {
+    "enabled": true,
+    "rates": [
+      { "locationTag": "town", "from": "vas", "to": "ae", "rate": 120, "dailyCap": 12 },
+      { "locationTag": "camp", "from": "vas", "to": "ae", "rate": 150, "dailyCap": 5 }
+    ]
+  },
+  "risk": {
+    "death_vas_loss_percent": 0.15
+  }
+};
+
 
 // --- Elixirs ---
 export const ELIXIRS_DATA: Elixir[] = [
